@@ -19,6 +19,14 @@ struct ScarlettApp: App {
     var body: some Scene {
         Window("Scarlett MixControl", id: "main") {
             ContentView(state: state)
+                .frame(
+                    minWidth: 960,
+                    idealWidth: 1340,
+                    maxWidth: .infinity,
+                    minHeight: 700,
+                    idealHeight: 860,
+                    maxHeight: .infinity
+                )
         }
         .windowResizability(.contentSize)
     }
