@@ -46,9 +46,6 @@ final class MixerState {
     @ObservationIgnored
     private let usbQueue = DispatchQueue(label: "scarlett.usb-writes", qos: .userInitiated)
 
-    @ObservationIgnored
-    private nonisolated(unsafe) var _writeError: String?
-
     nonisolated private func writeAsync(_ work: @escaping @Sendable () -> Void) {
         usbQueue.async(execute: work)
     }
@@ -380,8 +377,6 @@ final class MixerState {
         // The device retains capture routing across power cycles, so the
         // first launch after a clean state will have the device's factory
         // defaults active (Analog/SPDIF → DAW captures) which is fine.
-        // (We were pushing all 6 at launch but the 1st-gen firmware stalled
-        // under the resulting write burst.)
         if let data = defaults.data(forKey: Self.captureRoutesKey),
            let dict = try? JSONDecoder().decode([UInt16: UInt8].self, from: data) {
             for (chRaw, busRaw) in dict {
@@ -768,7 +763,6 @@ final class MixerState {
         logEvent(.info, "Mono", enabled ? "Monitor mono on" : "Monitor mono off")
     }
 
-    func userToggleMonitorMono() { userSetMonitorMono(!monitorMono) }
 
     // MARK: - Device config
 

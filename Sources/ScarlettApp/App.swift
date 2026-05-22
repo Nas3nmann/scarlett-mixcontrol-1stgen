@@ -110,7 +110,10 @@ struct ScarlettApp: App {
 @MainActor
 private func exportSnapshot(state: MixerState) {
     let panel = NSSavePanel()
-    panel.allowedContentTypes = [.json]
+    // No `allowedContentTypes`: NSSavePanel would otherwise auto-append
+    // the canonical extension of the chosen UTType (e.g. ".json"), which
+    // mangles our `.8i6` extension into "ScarlettSnapshot.8i6.json".
+    panel.allowsOtherFileTypes = true
     panel.nameFieldStringValue = "ScarlettSnapshot.8i6"
     panel.title = "Save Scarlett 8i6 snapshot"
     if panel.runModal() == .OK, let url = panel.url {
@@ -124,7 +127,8 @@ private func exportSnapshot(state: MixerState) {
 @MainActor
 private func importSnapshot(state: MixerState) {
     let panel = NSOpenPanel()
-    panel.allowedContentTypes = [.json]
+    // No content-type filter — the user might have a `.8i6` file or a
+    // `.json` file (both are valid, contents are checked at decode time).
     panel.allowsMultipleSelection = false
     panel.title = "Open Scarlett 8i6 snapshot"
     if panel.runModal() == .OK, let url = panel.url {

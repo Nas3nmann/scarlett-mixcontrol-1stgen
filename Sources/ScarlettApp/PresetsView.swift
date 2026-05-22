@@ -146,6 +146,7 @@ struct PresetsView: View {
             }
             .buttonStyle(.plain)
             .help("Delete preset")
+            .accessibilityLabel("Delete preset \(preset.name)")
         }
         .padding(10)
         .background(Theme.panelRaised)

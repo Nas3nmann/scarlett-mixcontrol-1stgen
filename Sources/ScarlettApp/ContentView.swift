@@ -129,6 +129,7 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .help(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")
+            .accessibilityLabel(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")
         }
         .padding(.horizontal, sidebarCollapsed ? 0 : 16)
         .padding(.top, 12)
@@ -274,103 +275,6 @@ struct MixerPaneView: View {
             }
             .background(Theme.background)
         }
-    }
-
-    private var masterSection: some View {
-        Panel(title: "Master outputs") {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 22) {
-                    masterStrip(
-                        title: "Monitor (Out 1+2)",
-                        subtitle: "Rear-panel jacks",
-                        db: Binding(get: { state.monitorAtten }, set: { state.userSetMonitorAtten($0) }),
-                        leftMuted: state.monitorLMuted,
-                        rightMuted: state.monitorRMuted,
-                        toggleLeft: { state.userSetSideMute(bus: .monitorLeft, muted: !state.monitorLMuted) },
-                        toggleRight: { state.userSetSideMute(bus: .monitorRight, muted: !state.monitorRMuted) },
-                        extraButton: AnyView(dimButton)
-                    )
-
-                    masterStrip(
-                        title: "Phones (Out 3+4)",
-                        subtitle: "Front jack / speakers",
-                        db: Binding(get: { state.phonesAtten }, set: { state.userSetPhonesAtten($0) }),
-                        leftMuted: state.phonesLMuted,
-                        rightMuted: state.phonesRMuted,
-                        toggleLeft: { state.userSetSideMute(bus: .phonesLeft, muted: !state.phonesLMuted) },
-                        toggleRight: { state.userSetSideMute(bus: .phonesRight, muted: !state.phonesRMuted) },
-                        extraButton: nil
-                    )
-
-                    masterControls
-                }
-                .padding(.bottom, 4)
-            }
-        }
-    }
-
-    private func masterStrip(
-        title: String,
-        subtitle: String,
-        db: Binding<Double>,
-        leftMuted: Bool, rightMuted: Bool,
-        toggleLeft: @escaping () -> Void,
-        toggleRight: @escaping () -> Void,
-        extraButton: AnyView?
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.subheadline.bold()).foregroundStyle(Theme.textPrimary)
-                Text(subtitle).font(.caption).foregroundStyle(Theme.textSecondary)
-            }
-            HStack(alignment: .center) {
-                Text("\(Int(db.wrappedValue)) dB")
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 50, alignment: .trailing)
-                Slider(value: db, in: -60...0, step: 1)
-                    .contextMenu {
-                        Button("Reset to 0 dB") { db.wrappedValue = 0 }
-                    }
-            }
-            HStack(spacing: 6) {
-                MasterButton(label: "Mute L", active: leftMuted,
-                             activeColor: Theme.muteActive, action: toggleLeft)
-                MasterButton(label: "Mute R", active: rightMuted,
-                             activeColor: Theme.muteActive, action: toggleRight)
-                if let extra = extraButton {
-                    extra
-                }
-            }
-        }
-        .frame(width: 320, alignment: .leading)
-    }
-
-    private var dimButton: AnyView {
-        AnyView(
-            MasterButton(
-                label: "Dim −20",
-                active: state.dimEnabled,
-                activeColor: Theme.soloActive,
-                action: { state.userToggleDim() }
-            )
-        )
-    }
-
-    private var masterControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Master").font(.subheadline.bold()).foregroundStyle(Theme.textPrimary)
-            Text("Affects all outputs").font(.caption).foregroundStyle(Theme.textSecondary)
-            MasterButton(label: state.masterMuted ? "Master muted" : "Mute all",
-                         active: state.masterMuted, activeColor: Theme.muteActive) {
-                state.userSetMasterMute(!state.masterMuted)
-            }
-            Button("Save to hardware") { state.saveToFlash() }
-                .controlSize(.regular)
-                .help("Persist current settings to device flash so they survive a power cycle.")
-                .disabled(!state.isConnected)
-        }
-        .frame(width: 200, alignment: .leading)
     }
 }
 
@@ -798,7 +702,7 @@ struct ConnectionOverlayCard: View {
                 .yellow,
                 "exclamationmark.triangle.fill",
                 "\(p.displayName) detected — not yet supported",
-                "This Community Edition currently only supports the Scarlett 8i6 (1st gen).  We've detected your \(p.displayName) on the bus but can't drive its mixer yet — the byte mappings differ between models.\n\nSupport for other 1st-gen Scarletts is on the roadmap. If you'd like to help, the project is open source and the byte tables can be extracted from the original MixControl binary the same way the 8i6 was — see the project README."
+                "This Community Edition currently only supports the Scarlett 8i6 (1st gen). We've detected your \(p.displayName) on the bus but can't drive its mixer yet — the byte mappings differ between models.\n\nSupport for other 1st-gen Scarletts is on the roadmap. If you'd like to help, the project is open source and the byte tables can be extracted from the original MixControl binary the same way the 8i6 was — see the project README."
             )
         }
     }
@@ -993,70 +897,3 @@ struct Panel<Content: View>: View {
     }
 }
 
-struct MasterButton: View {
-    let label: String
-    let active: Bool
-    let activeColor: Color
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(label)
-                .font(.caption.bold())
-                .frame(minWidth: 70)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 5)
-                .background(active ? activeColor : Theme.panelRaised)
-                .foregroundStyle(active ? .white : Theme.textSecondary)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-struct LevelRow: View {
-    let label: String
-    let db: Double
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Text(label)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(Theme.textSecondary)
-                .frame(width: 80, alignment: .leading)
-            HorizontalMeterBar(db: db)
-            Text(db.isFinite ? String(format: "%5.1f", db) : "-inf")
-                .font(.system(.caption2, design: .monospaced))
-                .foregroundStyle(Theme.textSecondary)
-                .frame(width: 44, alignment: .trailing)
-        }
-    }
-}
-
-struct HorizontalMeterBar: View {
-    let db: Double
-    private static let barWidth: CGFloat = 220
-
-    private var fillWidth: CGFloat {
-        let clamped = max(-60, min(0, db.isFinite ? db : -60))
-        return CGFloat(clamped + 60) / 60 * Self.barWidth
-    }
-
-    private var color: Color {
-        if db > -3 { return Theme.meterHigh }
-        if db > -12 { return Theme.meterMid }
-        return Theme.meterLow
-    }
-
-    var body: some View {
-        ZStack(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(Theme.faderTrack)
-                .frame(width: Self.barWidth, height: 8)
-            RoundedRectangle(cornerRadius: 2)
-                .fill(color)
-                .frame(width: fillWidth, height: 8)
-        }
-        .frame(width: Self.barWidth, height: 8)
-    }
-}

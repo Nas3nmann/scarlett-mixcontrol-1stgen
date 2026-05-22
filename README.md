@@ -28,14 +28,6 @@ for the <strong>1st-generation Scarlett 8i6</strong>.
 
 <br/>
 
-<div align="center">
-
-<!-- TODO: screenshots —
-<img src="docs/screenshot-mixer.png" width="80%" alt="Mixer screenshot" />
--->
-
-</div>
-
 ## ✨ Features
 
 |     |                                                                                             |
@@ -133,7 +125,7 @@ The biggest open item is **support for the other 1st-gen Scarletts** — 6i6, 16
 2. **Validation against real hardware** — without testing, every port is theoretical.
 3. **UI dimensions wired up** — array sizing in `MixerState` (currently hardcoded for 6 mix buses) and channel/output counts in views need to derive from the connected device's profile.
 
-If you have one of these devices and want to help, see the [Contributing guide](CONTRIBUTING.md) (TBD) or open an issue / PR.
+If you have one of these devices and want to help, [open an issue](https://github.com/MarecekW/scarlett-mixcontrol-1stgen/issues/new) or send a PR.
 
 <br/>
 

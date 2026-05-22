@@ -373,6 +373,7 @@ struct LinkButton: View {
         }
         .buttonStyle(.plain)
         .help(active ? "Linked stereo pair (click to unlink)" : "Link with adjacent channel")
+        .accessibilityLabel(active ? "Unlink stereo pair" : "Link with adjacent channel")
     }
 }
 
