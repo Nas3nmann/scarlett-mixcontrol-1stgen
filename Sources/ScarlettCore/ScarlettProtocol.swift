@@ -316,6 +316,28 @@ extension ScarlettDevice {
         )
     }
 
+    /// Toggle stereo-to-mono fold-down on each output pair.  When mono is
+    /// on for a pair, the device sums L+R into both physical outputs of
+    /// that pair (useful for mono-compatibility checks while mixing).
+    ///
+    /// Bytes reverse-engineered from `MacHWDevice::setMonMono` in MixControl
+    /// 1.10.6: bmRequestType=0x21, bRequest=0x01, wValue=0x0a01..0x0a05
+    /// (one per output pair), wIndex=0x1400, wLength=1, data=[0 or 1].
+    /// The original loops over 5 output pairs; on the 8i6 only the first
+    /// pair (Monitor L+R) is physically present, but writing all 5 is
+    /// harmless and matches what MixControl does.
+    public func setMonitorMono(pair: Int, enabled: Bool) throws {
+        guard (1...5).contains(pair) else {
+            throw ScarlettError.invalidArgument("monitor-mono pair must be 1..5")
+        }
+        try controlOut(
+            cmd: 0x01,
+            value: 0x0a00 + UInt16(pair),
+            index: 0x1400,
+            data: [enabled ? 0x01 : 0x00]
+        )
+    }
+
     // ---- Matrix mixer -----------------------------------------------------
 
     /// Connect a signal source to a matrix-mixer input channel (0..17).
@@ -353,6 +375,30 @@ extension ScarlettDevice {
             cmd: 0x01,
             value: route.rawValue,
             index: 0x3300,
+            data: [source.rawValue, 0x00]
+        )
+    }
+
+    /// Connect a source to one of the USB capture channels — i.e. what the
+    /// DAW sees when it reads input N from the device.  The 8i6 exposes 6
+    /// capture channels indexed 0..5; channels 6..7 are addressable for
+    /// loopback purposes on devices that support it (the 8i6 doesn't
+    /// surface them as DAW inputs but the protocol accepts the writes).
+    ///
+    /// `wIndex=0x3400` — the same byte x42's `scarlettmixer.py` labels
+    /// "?? clear assignments, disconnect matrix I/O ??" in `factory_reset`.
+    /// Disassembling MixControl's `routeChannel` showed this is actually
+    /// the third routing dimension (alongside `0x3200` matrix-source and
+    /// `0x3300` physical-output routes): it sets what gets sent back to
+    /// the host as a DAW input.
+    public func setCaptureRoute(channel: Int, from source: MixBus) throws {
+        guard (0...7).contains(channel) else {
+            throw ScarlettError.invalidArgument("capture channel must be 0..7")
+        }
+        try controlOut(
+            cmd: 0x01,
+            value: UInt16(channel),
+            index: 0x3400,
             data: [source.rawValue, 0x00]
         )
     }

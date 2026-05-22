@@ -48,7 +48,13 @@ struct ContentView: View {
     var body: some View {
         HStack(spacing: 0) {
             sidebar
-            Rectangle().fill(Theme.divider).frame(width: 1)
+            // Vertical divider extends from the very top of the window —
+            // including through the (transparent) title bar — so the
+            // sidebar/main split is visually continuous.
+            Rectangle()
+                .fill(Theme.divider)
+                .frame(width: 1)
+                .ignoresSafeArea(edges: .top)
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -59,7 +65,11 @@ struct ContentView: View {
         .task { state.startMeterPolling() }
     }
 
-    private var sidebarWidth: CGFloat { sidebarCollapsed ? 56 : 200 }
+    // The window's title bar shows "Scarlett MixControl" against the dark
+    // window chrome; the sidebar (a lighter panel) needs to be wide enough
+    // to cover the full title so the text doesn't get split across the two
+    // background shades.
+    private var sidebarWidth: CGFloat { sidebarCollapsed ? 56 : 250 }
 
     // MARK: - Sidebar
 
@@ -74,7 +84,13 @@ struct ContentView: View {
         }
         .frame(width: sidebarWidth, alignment: .leading)
         .frame(maxHeight: .infinity)
-        .background(Theme.panel)
+        // The fill extends behind the now-transparent title bar (note the
+        // .ignoresSafeArea on the background only — the sidebar's inner
+        // content still respects the safe area so it sits below the traffic
+        // lights).
+        .background {
+            Theme.panel.ignoresSafeArea(edges: .top)
+        }
     }
 
     private var sidebarHeader: some View {
@@ -369,6 +385,18 @@ struct RoutingView: View {
                     }
                 }
 
+                Panel(title: "USB capture (what your DAW sees)") {
+                    VStack(spacing: 8) {
+                        ForEach(0..<3, id: \.self) { pair in
+                            stereoCaptureRow(
+                                "DAW input \(pair*2 + 1)+\(pair*2 + 2)",
+                                "Capture channels \(pair*2 + 1) (L) and \(pair*2 + 2) (R)",
+                                pair*2, pair*2 + 1
+                            )
+                        }
+                    }
+                }
+
                 Text("Tip: routing reads always return 00 00 on the 1st-gen 8i6 — this app remembers your last setup in UserDefaults and re-pushes it to the device on launch.")
                     .font(.caption).foregroundStyle(Theme.textSecondary)
             }
@@ -407,6 +435,37 @@ extension RoutingView {
                 selection: Binding(
                     get: { state.routes[route] ?? .off },
                     set: { state.userSetRoute(route, to: $0) }
+                ),
+                width: 150
+            )
+        }
+    }
+
+    fileprivate func stereoCaptureRow(_ title: String, _ subtitle: String, _ leftCh: Int, _ rightCh: Int) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.subheadline.bold()).foregroundStyle(Theme.textPrimary)
+                Text(subtitle).font(.caption).foregroundStyle(Theme.textSecondary)
+            }
+            .frame(width: 220, alignment: .leading)
+            capturePicker(label: "L", channel: leftCh)
+            capturePicker(label: "R", channel: rightCh)
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(Theme.panelRaised)
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+    }
+
+    fileprivate func capturePicker(label: String, channel: Int) -> some View {
+        HStack(spacing: 6) {
+            Text(label).font(.caption.monospacedDigit()).foregroundStyle(Theme.textSecondary).frame(width: 12)
+            ThemedMenuPicker(
+                options: MixBus.availableOn8i6,
+                displayName: { $0.displayName },
+                selection: Binding(
+                    get: { state.captureRoutes[channel] ?? .off },
+                    set: { state.userSetCaptureRoute(channel: channel, to: $0) }
                 ),
                 width: 150
             )

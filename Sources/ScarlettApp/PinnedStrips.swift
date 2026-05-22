@@ -170,6 +170,16 @@ struct PinnedMasterStrip: View {
                 showDim: true,
                 dimActive: state.dimEnabled,
                 toggleDim: { state.userToggleDim() }
+                // Mn (Monitor Mono) deliberately disabled: even after
+                // matching MixControl's exact byte sequence (wValue=
+                // 0x0a01..0x0a05, wIndex=0x1400, wLength=1) and inserting
+                // 20ms inter-write delays, sending this command from our
+                // process makes the 8i6's firmware drop the USB
+                // connection.  MixControl likely performs an undocumented
+                // authorization handshake at startup that we haven't
+                // identified.  Code paths for `setMonitorMono`,
+                // `userSetMonitorMono`, etc. are kept around in case we
+                // ever crack the handshake.
             )
 
             OutputStrip(
@@ -214,6 +224,9 @@ struct OutputStrip: View {
     let showDim: Bool
     let dimActive: Bool
     let toggleDim: () -> Void
+    var showMono: Bool = false
+    var monoActive: Bool = false
+    var toggleMono: () -> Void = {}
 
     /// Output meters mirror the currently-selected mix bus pair so the user
     /// sees the immediate effect of any matrix edit (muting a channel, moving
@@ -330,6 +343,10 @@ struct OutputStrip: View {
             if showDim {
                 StripButton(letter: "Dim", active: dimActive,
                             activeColor: Theme.soloActive, action: toggleDim)
+            }
+            if showMono {
+                StripButton(letter: "Mn", active: monoActive,
+                            activeColor: Theme.soloActive, action: toggleMono)
             }
             Spacer(minLength: 0)
         }

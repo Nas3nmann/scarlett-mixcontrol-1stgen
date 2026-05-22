@@ -99,11 +99,24 @@ final class MixerState {
     var dimEnabled: Bool = false
     @ObservationIgnored private var preDimMonitorAtten: Double = 0
 
+    /// Monitor Mono fold-down — when on, the device sums L+R into both
+    /// monitor outputs.  Useful for mono-compatibility checks while mixing.
+    var monitorMono: Bool = false
+
     // Per-side independent mutes (vs the global master mute).
     var monitorLMuted: Bool = false
     var monitorRMuted: Bool = false
     var phonesLMuted:  Bool = false
     var phonesRMuted:  Bool = false
+
+    /// Per-USB-capture-channel routing — what the DAW sees on each of its
+    /// input channels.  6 entries (DAW input 1..6).  Default values mirror
+    /// what MixControl applies on first launch: capture 1..4 = Analog 1..4,
+    /// capture 5..6 = S/PDIF 1..2.  Persisted to UserDefaults like routes.
+    var captureRoutes: [Int: MixBus] = [
+        0: .analog1, 1: .analog2, 2: .analog3, 3: .analog4,
+        4: .spdif1,  5: .spdif2,
+    ]
 
     // Matrix mixer: 18 input channels × 6 mix buses (M1..M6).  The user-
     // facing knobs are `mixerLevels` + `mixerPans` + `mixerMutes` + `mixerSolos`.
@@ -305,10 +318,12 @@ final class MixerState {
     // Everything else (gains, mutes, atten, clock, etc.) is reliably read on
     // launch via refreshFromDevice and doesn't need to be saved.
 
-    private static let routesKey  = "scarlett.routes.v1"
-    private static let busTabKey  = "scarlett.selectedBus.v1"
-    private static let matrixKey  = "scarlett.matrix.v1"
-    private static let presetsKey = "scarlett.presets.v1"
+    private static let routesKey         = "scarlett.routes.v1"
+    private static let busTabKey         = "scarlett.selectedBus.v1"
+    private static let matrixKey         = "scarlett.matrix.v1"
+    private static let presetsKey        = "scarlett.presets.v1"
+    private static let captureRoutesKey  = "scarlett.captureRoutes.v1"
+    private static let monitorMonoKey    = "scarlett.monitorMono.v1"
 
     private struct PersistedMatrix: Codable {
         var gains: [[Double]]?       // legacy, no longer written, kept for decode-only
@@ -336,6 +351,25 @@ final class MixerState {
                 }
             }
         }
+
+        // Capture routes — load from UserDefaults but do NOT push at launch.
+        // Push only happens when the user actively changes one in the UI.
+        // The device retains capture routing across power cycles, so the
+        // first launch after a clean state will have the device's factory
+        // defaults active (Analog/SPDIF → DAW captures) which is fine.
+        // (We were pushing all 6 at launch but the 1st-gen firmware stalled
+        // under the resulting write burst.)
+        if let data = defaults.data(forKey: Self.captureRoutesKey),
+           let dict = try? JSONDecoder().decode([UInt16: UInt8].self, from: data) {
+            for (chRaw, busRaw) in dict {
+                guard let bus = MixBus(rawValue: busRaw) else { continue }
+                captureRoutes[Int(chRaw)] = bus
+            }
+        }
+
+        // Monitor Mono — load from UserDefaults but again do NOT push.  The
+        // device remembers this across power cycles too.
+        monitorMono = defaults.bool(forKey: Self.monitorMonoKey)
 
         // Selected bus tab
         // Persisted bus index is the matrix-index (0..5), not the byte value,
@@ -400,6 +434,18 @@ final class MixerState {
         if let data = try? JSONEncoder().encode(dict) {
             UserDefaults.standard.set(data, forKey: Self.routesKey)
         }
+    }
+
+    private func saveCaptureRoutes() {
+        let dict = Dictionary(uniqueKeysWithValues:
+            captureRoutes.map { (UInt16($0.key), $0.value.rawValue) })
+        if let data = try? JSONEncoder().encode(dict) {
+            UserDefaults.standard.set(data, forKey: Self.captureRoutesKey)
+        }
+    }
+
+    private func saveMonitorMono() {
+        UserDefaults.standard.set(monitorMono, forKey: Self.monitorMonoKey)
     }
 
     private func saveSelectedBus() {
@@ -642,6 +688,39 @@ final class MixerState {
         guard let dev = device else { return }
         writeAsync { try? dev.setRouteSource(route, from: source) }
     }
+
+    /// Set what the DAW sees on USB capture channel `channel` (0..5 on the
+    /// 8i6).  Persists and pushes to the device.
+    func userSetCaptureRoute(channel: Int, to source: MixBus) {
+        guard (0...7).contains(channel) else { return }
+        captureRoutes[channel] = source
+        saveCaptureRoutes()
+        guard let dev = device else { return }
+        writeAsync { try? dev.setCaptureRoute(channel: channel, from: source) }
+    }
+
+    // MARK: - Monitor mono
+
+    func userSetMonitorMono(_ enabled: Bool) {
+        monitorMono = enabled
+        saveMonitorMono()
+        guard let dev = device else { return }
+        // MixControl's setMonMono loops over 5 output pairs, writing the
+        // user's desired value to pair 1 (the active one for Monitor) and
+        // 0 to the rest.  We replicate the full sequence with a small
+        // inter-write delay because the 1st-gen 8i6's firmware stalls if
+        // it gets 5 control transfers in rapid succession.
+        writeAsync {
+            for pair in 1...5 {
+                let value = (pair == 1) ? enabled : false
+                try? dev.setMonitorMono(pair: pair, enabled: value)
+                Thread.sleep(forTimeInterval: 0.02)   // 20 ms between writes
+            }
+        }
+        logEvent(.info, "Mono", enabled ? "Monitor mono on" : "Monitor mono off")
+    }
+
+    func userToggleMonitorMono() { userSetMonitorMono(!monitorMono) }
 
     // MARK: - Device config
 
@@ -969,6 +1048,50 @@ final class MixerState {
         savePresets()
     }
 
+    /// Build a snapshot of the current state in `ScarlettPreset` form.  The
+    /// snapshot is identical in shape to what `userSavePreset` writes to
+    /// the in-app list; the difference is just where it's persisted.
+    func currentSnapshot(named name: String) -> ScarlettPreset {
+        ScarlettPreset(
+            id: UUID(),
+            name: name,
+            createdAt: Date(),
+            routes: Dictionary(uniqueKeysWithValues:
+                routes.map { ($0.key.rawValue, $0.value.rawValue) }),
+            mixerSources: mixerSources.map { $0.rawValue },
+            mixerLevels: mixerLevels,
+            mixerPans: mixerPans,
+            mixerGains: nil,
+            mixerMutes: mixerMutes,
+            mixerSolos: mixerSolos,
+            mixerNames: mixerNames,
+            linkedLefts: Array(linkedPairs),
+            selectedBus: UInt8(selectedBus.matrixIndex ?? 0)
+        )
+    }
+
+    /// Export the current state to a `.8i6` file at the given URL.  The file
+    /// format is JSON-encoded `ScarlettPreset` for cross-compatibility with
+    /// the in-app preset list (you can save a file, then load it back as a
+    /// preset and vice versa).
+    func userExportSnapshot(to url: URL) throws {
+        let snapshot = currentSnapshot(named: url.deletingPathExtension().lastPathComponent)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(snapshot)
+        try data.write(to: url)
+        logEvent(.info, "Export", "Exported snapshot to \(url.lastPathComponent)")
+    }
+
+    /// Import a `.8i6` snapshot file from the given URL and apply it
+    /// (routes + matrix + sources) the same way `userLoadPreset` does.
+    func userImportSnapshot(from url: URL) throws {
+        let data = try Data(contentsOf: url)
+        let preset = try JSONDecoder().decode(ScarlettPreset.self, from: data)
+        userLoadPreset(preset)
+        logEvent(.info, "Import", "Imported snapshot \(url.lastPathComponent)")
+    }
+
     // MARK: - Reset
 
     /// Apply a sensible "factory" default config:
@@ -1005,7 +1128,36 @@ final class MixerState {
         mixerSolos  = Array(repeating: Array(repeating: false, count: 6), count: 18)
         linkedPairs = []
 
-        // Re-assert the pinned DAW return.
+        // Reset matrix sources to a sensible default: Ch 1..4 → Analog 1..4,
+        // Ch 5..6 → S/PDIF 1..2, Ch 7..13 → Off, Ch 14..15 reserved for the
+        // pinned DAW return (set below).  We disconnect every channel first
+        // (set to .off on the device) so the disconnect-first rule doesn't
+        // bite when we reassign the analog/spdif inputs.
+        let defaultSources: [SignalSource] = [
+            .analog1, .analog2, .analog3, .analog4,    // 0..3
+            .spdif1,  .spdif2,                          // 4..5
+            .off, .off, .off, .off, .off, .off, .off, .off,  // 6..13
+            .off, .off,                                 // 14..15 (pinned DAW assigns these)
+            .off, .off,                                 // 16..17
+        ]
+        // First pass: clear everything on the device so reassignment can't
+        // hit the firmware's "source already wired" silent rejection.
+        for ch in 0..<18 {
+            mixerSources[ch] = .off
+            if let dev = device {
+                writeAsync { try? dev.setMixerSource(channel: ch, source: .off) }
+            }
+        }
+        // Second pass: assign the real defaults for ch 0..5.
+        for ch in 0..<6 {
+            let src = defaultSources[ch]
+            mixerSources[ch] = src
+            if let dev = device, src != .off {
+                writeAsync { try? dev.setMixerSource(channel: ch, source: src) }
+            }
+        }
+
+        // Re-assert the pinned DAW return (Ch 14/15 → DAW 1/2, hard panned).
         ensurePinnedDawChannels()
 
         // Push every cell to the device with the new state.
@@ -1013,6 +1165,25 @@ final class MixerState {
             for bus in MixBus.matrixOutputs {
                 pushCellGain(channel: ch, bus: bus)
             }
+        }
+
+        // Capture routes back to factory: 1..4 = Analog, 5..6 = S/PDIF.
+        let defaultCaptureRoutes: [(Int, MixBus)] = [
+            (0, .analog1), (1, .analog2), (2, .analog3), (3, .analog4),
+            (4, .spdif1),  (5, .spdif2),
+        ]
+        captureRoutes.removeAll(keepingCapacity: true)
+        for (ch, src) in defaultCaptureRoutes {
+            captureRoutes[ch] = src
+            if let dev = device {
+                writeAsync { try? dev.setCaptureRoute(channel: ch, from: src) }
+            }
+        }
+        saveCaptureRoutes()
+
+        // Monitor mono off.
+        if monitorMono {
+            userSetMonitorMono(false)
         }
 
         saveMatrix()
@@ -1059,6 +1230,41 @@ final class MixerState {
         guard let dev = device, let busIdx = bus.matrixIndex else { return }
         let db = effectiveGain(channel: channel, busIdx: busIdx)
         writeAsync { try? dev.setMixerGain(channel: channel, bus: bus, db: db) }
+    }
+
+    // MARK: - Copy mix to another bus
+
+    /// Replicate the per-channel settings from one mix bus to another:
+    /// for every matrix channel, copy that channel's level/pan/mute/solo for
+    /// the source pair to the destination pair (and the cell-gains for the
+    /// source bus to the destination bus).  Useful for "make M3+M4 = M1+M2".
+    ///
+    /// `from` and `to` are the bus's stereo pair (0 = M1+M2, 1 = M3+M4,
+    /// 2 = M5+M6).  This works at the *pair* granularity because levels and
+    /// pans live per-pair; mute/solo are per-cell so both members of the
+    /// destination pair get updated.
+    func userCopyMixPair(from sourcePair: Int, to destPair: Int) {
+        guard sourcePair != destPair,
+              (0...2).contains(sourcePair),
+              (0...2).contains(destPair) else { return }
+        for ch in 0..<18 {
+            // Copy level/pan (per-pair).
+            mixerLevels[ch][destPair] = mixerLevels[ch][sourcePair]
+            mixerPans[ch][destPair]   = mixerPans[ch][sourcePair]
+            // Copy mute/solo (per-cell — both sides of the pair).
+            for offset in 0..<2 {
+                let srcIdx = sourcePair * 2 + offset
+                let dstIdx = destPair * 2 + offset
+                mixerMutes[ch][dstIdx] = mixerMutes[ch][srcIdx]
+                mixerSolos[ch][dstIdx] = mixerSolos[ch][srcIdx]
+            }
+            // Push the destination pair to the device.
+            pushBusPair(channel: ch, pair: destPair)
+        }
+        saveMatrix()
+        let srcName = "Mix M\(sourcePair*2 + 1)+M\(sourcePair*2 + 2)"
+        let dstName = "Mix M\(destPair*2 + 1)+M\(destPair*2 + 2)"
+        logEvent(.info, "Copy", "Copied \(srcName) → \(dstName)")
     }
 
     // MARK: - Master section helpers

@@ -19,7 +19,8 @@ let package = Package(
         .executableTarget(
             name: "ScarlettApp",
             dependencies: ["ScarlettCore"],
-            path: "Sources/ScarlettApp"
+            path: "Sources/ScarlettApp",
+            resources: [.process("Resources")]
         ),
     ]
 )

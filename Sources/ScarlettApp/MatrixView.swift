@@ -45,6 +45,7 @@ struct MatrixMixerView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                 }
                 .buttonStyle(.plain)
+                .contextMenu { copyMixMenuItems(targetBus: bus) }
             }
             Spacer()
             actionButton(icon: "arrow.counterclockwise", label: "Clear peaks") {
@@ -62,17 +63,26 @@ struct MatrixMixerView: View {
             }
             .help("Mute every output bus on the device.")
 
-            actionButton(icon: "arrow.uturn.backward.circle", label: "Default config") {
-                state.userResetRoutingAndMatrix()
-            }
-            .disabled(!state.isConnected)
-            .help("Reset routing and matrix to defaults: Monitor + Phones routed direct from DAW 1/2 (Mac audio audible), matrix cleared, pinned DAW return re-established.")
-
             actionButton(icon: "internaldrive", label: "Save to hardware") {
                 state.saveToFlash()
             }
             .disabled(!state.isConnected)
             .help("Persist current settings to device flash so they survive a power cycle.")
+        }
+    }
+
+    /// Context-menu items for a bus tab — copy this pair's settings to one
+    /// of the other two pairs.  Right-click any bus tab to access.
+    @ViewBuilder
+    private func copyMixMenuItems(targetBus: MixBus) -> some View {
+        let sourcePair = targetBus.stereoPairIndex ?? 0
+        let pairLabel: (Int) -> String = { p in "M\(p*2 + 1)+M\(p*2 + 2)" }
+        ForEach(0..<3, id: \.self) { dest in
+            if dest != sourcePair {
+                Button("Copy \(pairLabel(sourcePair)) → \(pairLabel(dest))") {
+                    state.userCopyMixPair(from: sourcePair, to: dest)
+                }
+            }
         }
     }
 
