@@ -5,16 +5,19 @@ let package = Package(
     name: "ScarlettMixControl",
     platforms: [.macOS(.v14)],
     products: [
+        // Library that other Swift targets can link against.
         .library(name: "ScarlettCore", targets: ["ScarlettCore"]),
-        .executable(name: "scarlett-cli", targets: ["scarlett-cli"]),
+        // Executables — product names stay kebab-case (Unix-style binary
+        // names) while target/folder names are PascalCase (Swift convention).
+        .executable(name: "scarlett-cli", targets: ["ScarlettCLI"]),
         .executable(name: "scarlett-app", targets: ["ScarlettApp"]),
     ],
     targets: [
         .target(name: "ScarlettCore", path: "Sources/ScarlettCore"),
         .executableTarget(
-            name: "scarlett-cli",
+            name: "ScarlettCLI",
             dependencies: ["ScarlettCore"],
-            path: "Sources/scarlett-cli"
+            path: "Sources/ScarlettCLI"
         ),
         .executableTarget(
             name: "ScarlettApp",
