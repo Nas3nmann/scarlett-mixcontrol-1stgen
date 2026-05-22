@@ -79,34 +79,29 @@ public final class ScarlettDevice {
     private let service: io_service_t
     private let iface: DeviceIface
 
-    /// Open the first 1st-gen Scarlett we find on the bus.  Searches for
-    /// any of the PIDs declared in `DeviceProfile.all`; the matching
-    /// profile is exposed as `self.profile`.
+    /// Open the first 1st-gen Scarlett we find on the bus.  Tries each
+    /// `DeviceProfile.all` PID in turn; the matching profile is exposed
+    /// as `self.profile`.
     public init() throws {
-        // Enumerate every Focusrite USB device, pick the first one whose
-        // PID matches a known DeviceProfile.
-        let match = IOServiceMatching(kIOUSBDeviceClassName) as NSMutableDictionary
-        match[kUSBVendorID] = NSNumber(value: Self.focusriteVID)
-
-        var iter: io_iterator_t = 0
-        let kr = IOServiceGetMatchingServices(kIOMainPortDefault, match, &iter)
-        guard kr == KERN_SUCCESS else { throw ScarlettError.ioReturn("IOServiceGetMatchingServices", kr) }
-        defer { IOObjectRelease(iter) }
-
+        // Rather than enumerate Focusrite-VID devices and read each one's
+        // PID property (which requires fiddly Unmanaged<CFTypeRef>
+        // bridging in Swift), we just ask IOKit for each known
+        // {VID, PID} pair directly and take the first match.  Linear in
+        // the number of known profiles, but that's only 3 today.
         var picked: (svc: io_service_t, profile: DeviceProfile)? = nil
-        while true {
+        for profile in DeviceProfile.all {
+            let match = IOServiceMatching(kIOUSBDeviceClassName) as NSMutableDictionary
+            match[kUSBVendorID]  = NSNumber(value: Self.focusriteVID)
+            match[kUSBProductID] = NSNumber(value: profile.productID)
+            var iter: io_iterator_t = 0
+            let kr = IOServiceGetMatchingServices(kIOMainPortDefault, match, &iter)
+            guard kr == KERN_SUCCESS else { continue }
             let svc = IOIteratorNext(iter)
-            if svc == 0 { break }
-            let pidNum = IORegistryEntrySearchCFProperty(
-                svc, kIOServicePlane, kUSBProductID as CFString, nil,
-                IOOptionBits(kIORegistryIterateRecursively | kIORegistryIterateParents)
-            )
-            let pid = (pidNum as? NSNumber)?.uint16Value ?? 0
-            if let profile = DeviceProfile.forProductID(pid) {
+            IOObjectRelease(iter)
+            if svc != 0 {
                 picked = (svc, profile)
                 break
             }
-            IOObjectRelease(svc)
         }
         guard let picked else {
             throw ScarlettError.deviceNotFound(vid: Self.focusriteVID, pid: 0)

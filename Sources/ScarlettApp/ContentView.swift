@@ -582,10 +582,13 @@ struct DeviceView: View {
                         Button("Save to hardware") { state.saveToFlash() }
                             .help("Writes current state to the device's flash so it survives a power cycle. Flash has finite write cycles; don't call this every change.")
                             .disabled(!state.isConnected)
+                        Button("Load from device") { state.userLoadFromDevice() }
+                            .help("Re-read the matrix state (sources + cell gains) from the device. Useful if another tool changed the device behind the app's back, or after a power cycle. Routing isn't refreshed — the firmware doesn't report routes back.")
+                            .disabled(!state.isConnected)
                         Button("Reset routing & matrix", role: .destructive) {
                             state.userResetRoutingAndMatrix()
                         }
-                        .help("Clear every output route to Off and reset all matrix channels (levels 0 / pans centered / unmuted / unsoloed / unlinked). The pinned DAW return is re-applied automatically.  Hardware switches, clock, sample rate and output volumes are untouched.")
+                        .help("Clear every output route to Off and reset all matrix channels (levels 0 / pans centered / unmuted / unsoloed / unlinked). The pinned DAW return is re-applied automatically. Hardware switches, clock, sample rate and output volumes are untouched.")
                         .disabled(!state.isConnected)
                         Spacer()
                     }

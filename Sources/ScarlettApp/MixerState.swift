@@ -120,10 +120,9 @@ final class MixerState {
     ]
 
     // Matrix mixer: 18 input channels × 6 mix buses (M1..M6).  The user-
-    // facing knobs are `mixerLevels` + `mixerPans` + `mixerMutes` + `mixerSolos`.
-    // Per-cell gain that actually hits the device is computed on demand by
-    // `effectiveGain(...)` from those four fields — there is no separate
-    // stored "mixerGains" cache.
+    // facing knobs are `mixerLevels` + `mixerPans` + `mixerMutes` +
+    // `mixerSolos`.  The per-cell gain actually sent to the device is
+    // computed on demand by `effectiveGain(...)` from those four fields.
     var mixerSources: [SignalSource] = Array(repeating: .off, count: 18)
     /// One fader value per channel per stereo bus pair (M1+M2, M3+M4, M5+M6).
     /// Range -60…+6 dB, default 0.
@@ -131,8 +130,12 @@ final class MixerState {
     /// One pan position per channel per stereo bus pair. -1 = full left,
     /// 0 = center (no attenuation either side), +1 = full right.
     var mixerPans:   [[Double]] = Array(repeating: Array(repeating: 0, count: 3), count: 18)
-    var mixerMutes: [[Bool]]   = Array(repeating: Array(repeating: false, count: 6), count: 18)
-    var mixerSolos: [[Bool]]   = Array(repeating: Array(repeating: false, count: 6), count: 18)
+    /// Per-channel mute — silences the channel's contribution to every
+    /// mix bus.  Matches how M behaves on a real mixer / in MixControl.
+    var mixerMutes: [Bool] = Array(repeating: false, count: 18)
+    /// Per-channel solo.  When any channel is soloed, every non-soloed
+    /// channel goes silent on every bus.
+    var mixerSolos: [Bool] = Array(repeating: false, count: 18)
     /// User-set custom names per matrix channel. Empty string = use default "Ch N".
     var mixerNames: [String]   = Array(repeating: "", count: 18)
     /// Indices of the LEFT channel of each linked stereo pair.  Channels are
@@ -347,14 +350,13 @@ final class MixerState {
     private static let firstLaunchDoneKey   = "scarlett.firstLaunchCompleted.v1"
 
     private struct PersistedMatrix: Codable {
-        var gains: [[Double]]?       // legacy, no longer written, kept for decode-only
-        var levels: [[Double]]?      // per-channel-per-pair level
-        var pans: [[Double]]?        // per-channel-per-pair pan
-        var mutes: [[Bool]]
-        var solos: [[Bool]]
-        var names: [String]
-        var linkedLefts: [Int]?
-        var sources: [UInt8]?        // SignalSource.rawValue per matrix channel
+        var levels: [[Double]]      // 18 × 3, per-channel-per-pair
+        var pans: [[Double]]        // 18 × 3
+        var mutes: [Bool]           // 18, per-channel
+        var solos: [Bool]           // 18, per-channel
+        var sources: [UInt8]        // 18, SignalSource.rawValue per channel
+        var names: [String]         // 18
+        var linkedLefts: [Int]      // left-channel indices of linked pairs
     }
 
     private func loadPersistedState() {
@@ -406,33 +408,23 @@ final class MixerState {
         // cell to the device after loading so the hardware reflects what
         // the UI says regardless of what state the device booted in.
         if let data = defaults.data(forKey: Self.matrixKey),
-           let m = try? JSONDecoder().decode(PersistedMatrix.self, from: data) {
-            if m.mutes.count == 18 && m.mutes.allSatisfy({ $0.count == 6 }) {
-                mixerMutes = m.mutes
-            }
-            if m.solos.count == 18 && m.solos.allSatisfy({ $0.count == 6 }) {
-                mixerSolos = m.solos
-            }
-            if m.names.count == 18 {
-                mixerNames = m.names
-            }
-            if let lefts = m.linkedLefts {
-                linkedPairs = Set(lefts)
-            }
-            if let srcs = m.sources, srcs.count == 18 {
-                for ch in 0..<18 {
-                    if let v = SignalSource(rawValue: srcs[ch]) { mixerSources[ch] = v }
+           let m = try? JSONDecoder().decode(PersistedMatrix.self, from: data),
+           m.levels.count == 18, m.levels.allSatisfy({ $0.count == 3 }),
+           m.pans.count   == 18, m.pans.allSatisfy({ $0.count == 3 }),
+           m.mutes.count  == 18, m.solos.count == 18,
+           m.sources.count == 18, m.names.count == 18
+        {
+            mixerLevels = m.levels
+            mixerPans = m.pans
+            mixerMutes = m.mutes
+            mixerSolos = m.solos
+            mixerNames = m.names
+            linkedPairs = Set(m.linkedLefts)
+            for ch in 0..<18 {
+                if let v = SignalSource(rawValue: m.sources[ch]) {
+                    mixerSources[ch] = v
                 }
             }
-            if let lvls = m.levels, lvls.count == 18, lvls.allSatisfy({ $0.count == 3 }) {
-                mixerLevels = lvls
-            }
-            if let pns = m.pans, pns.count == 18, pns.allSatisfy({ $0.count == 3 }) {
-                mixerPans = pns
-            }
-
-            // Re-push every cell so the device matches the saved state — even
-            // if it was power-cycled between sessions.
             if device != nil {
                 for ch in 0..<18 {
                     for bus in MixBus.matrixOutputs {
@@ -499,13 +491,13 @@ final class MixerState {
 
     private func saveMatrix() {
         let m = PersistedMatrix(
-            gains: nil,                          // legacy field, no longer written
             levels: mixerLevels,
             pans: mixerPans,
-            mutes: mixerMutes, solos: mixerSolos,
+            mutes: mixerMutes,
+            solos: mixerSolos,
+            sources: mixerSources.map { $0.rawValue },
             names: mixerNames,
-            linkedLefts: Array(linkedPairs),
-            sources: mixerSources.map { $0.rawValue }
+            linkedLefts: Array(linkedPairs)
         )
         if let data = try? JSONEncoder().encode(m) {
             UserDefaults.standard.set(data, forKey: Self.matrixKey)
@@ -516,6 +508,19 @@ final class MixerState {
         if let data = try? JSONEncoder().encode(presets) {
             UserDefaults.standard.set(data, forKey: Self.presetsKey)
         }
+    }
+
+    /// User-facing wrapper around `refreshFromDevice` — re-reads the
+    /// device's matrix state into the view model and persists it.  Useful
+    /// when another tool (or a power-cycle) has changed the device's
+    /// flash and the UI is now out of sync.  Routing GETs always return
+    /// 00 00 on the 1st-gen 8i6, so routes themselves aren't refreshed —
+    /// only matrix sources / cell gains.
+    func userLoadFromDevice() {
+        guard device != nil else { return }
+        refreshFromDevice()
+        saveMatrix()
+        logEvent(.info, "Refresh", "Matrix state reloaded from device")
     }
 
     /// Read all controls' current state from the device and update the
@@ -789,9 +794,11 @@ final class MixerState {
     /// - Otherwise: derived from `mixerLevels` + `mixerPans` for the bus pair
     ///   this bus belongs to.
     func effectiveGain(channel: Int, busIdx: Int) -> Double {
-        if mixerMutes[channel][busIdx] { return -128 }
-        let soloActive = (0..<18).contains { mixerSolos[$0][busIdx] }
-        if soloActive && !mixerSolos[channel][busIdx] { return -128 }
+        // Per-channel mute / solo: a single boolean per channel applies
+        // to *every* bus this channel feeds.
+        if mixerMutes[channel] { return -128 }
+        let soloActive = mixerSolos.contains(true)
+        if soloActive && !mixerSolos[channel] { return -128 }
         let pair = busIdx / 2
         let isLeft = busIdx % 2 == 0
         return Self.cellGain(level: mixerLevels[channel][pair],
@@ -1021,7 +1028,6 @@ final class MixerState {
             mixerSources: mixerSources.map { $0.rawValue },
             mixerLevels: mixerLevels,
             mixerPans: mixerPans,
-            mixerGains: nil,                  // legacy field — no longer written
             mixerMutes: mixerMutes,
             mixerSolos: mixerSolos,
             mixerNames: mixerNames,
@@ -1059,16 +1065,15 @@ final class MixerState {
             }
         }
 
-        // Mutes / solos / levels / pans / names / links — applied before we
-        // push so `pushCellGain` sees correct flags when computing
-        // effective gain.
+        // Apply mutes / solos / levels / pans / names / links before
+        // pushing cells so `effectiveGain` sees the right state.
         if preset.mixerMutes.count == 18 { mixerMutes = preset.mixerMutes }
         if preset.mixerSolos.count == 18 { mixerSolos = preset.mixerSolos }
-        if let lvls = preset.mixerLevels, lvls.count == 18, lvls.allSatisfy({ $0.count == 3 }) {
-            mixerLevels = lvls
+        if preset.mixerLevels.count == 18, preset.mixerLevels.allSatisfy({ $0.count == 3 }) {
+            mixerLevels = preset.mixerLevels
         }
-        if let pns = preset.mixerPans, pns.count == 18, pns.allSatisfy({ $0.count == 3 }) {
-            mixerPans = pns
+        if preset.mixerPans.count == 18, preset.mixerPans.allSatisfy({ $0.count == 3 }) {
+            mixerPans = preset.mixerPans
         }
         if preset.mixerNames.count == 18 { mixerNames = preset.mixerNames }
         linkedPairs = Set(preset.linkedLefts)
@@ -1104,7 +1109,6 @@ final class MixerState {
             mixerSources: mixerSources.map { $0.rawValue },
             mixerLevels: mixerLevels,
             mixerPans: mixerPans,
-            mixerGains: nil,
             mixerMutes: mixerMutes,
             mixerSolos: mixerSolos,
             mixerNames: mixerNames,
@@ -1167,8 +1171,8 @@ final class MixerState {
         // Reset matrix levels / pans / mutes / solos to defaults.
         mixerLevels = Array(repeating: Array(repeating: 0, count: 3), count: 18)
         mixerPans   = Array(repeating: Array(repeating: 0, count: 3), count: 18)
-        mixerMutes  = Array(repeating: Array(repeating: false, count: 6), count: 18)
-        mixerSolos  = Array(repeating: Array(repeating: false, count: 6), count: 18)
+        mixerMutes  = Array(repeating: false, count: 18)
+        mixerSolos  = Array(repeating: false, count: 18)
         linkedPairs = []
 
         // Reset matrix sources to a sensible default: Ch 1..4 → Analog 1..4,
@@ -1233,40 +1237,55 @@ final class MixerState {
         logEvent(.info, "Reset", "Default config applied (Monitor + Phones = DAW 1/2)")
     }
 
-    /// Set the mute on a single cell directly (no toggle, no link propagation).
-    /// Used by callers (like `PinnedDawStrip`) that drive multiple channels
-    /// in concert and want exact control over each.
-    func userSetMixerMute(channel: Int, bus: MixBus, muted: Bool) {
-        guard (0..<18).contains(channel), let busIdx = bus.matrixIndex else { return }
-        mixerMutes[channel][busIdx] = muted
-        pushCellGain(channel: channel, bus: bus)
+    /// Set the channel-wide mute directly (no toggle, no link propagation).
+    /// Used by callers that drive multiple channels in concert (`PinnedDawStrip`).
+    func userSetMixerMute(channel: Int, muted: Bool) {
+        guard (0..<18).contains(channel) else { return }
+        mixerMutes[channel] = muted
+        pushAllCells(forChannel: channel)
         saveMatrix()
     }
 
-    func userToggleMixerMute(channel: Int, bus: MixBus) {
-        guard (0..<18).contains(channel), let busIdx = bus.matrixIndex else { return }
-        let newValue = !mixerMutes[channel][busIdx]
-        mixerMutes[channel][busIdx] = newValue
-        pushCellGain(channel: channel, bus: bus)
+    /// Toggle the channel-wide mute, mirroring to the linked partner.
+    /// Affects every bus the channel feeds — that's the standard mixer
+    /// UX (M = silence this channel everywhere).
+    func userToggleMixerMute(channel: Int) {
+        guard (0..<18).contains(channel) else { return }
+        let newValue = !mixerMutes[channel]
+        mixerMutes[channel] = newValue
+        pushAllCells(forChannel: channel)
         if let partner = linkedPartner(channel) {
-            mixerMutes[partner][busIdx] = newValue
-            pushCellGain(channel: partner, bus: bus)
+            mixerMutes[partner] = newValue
+            pushAllCells(forChannel: partner)
         }
         saveMatrix()
     }
 
-    /// Solo affects every cell in the same bus column, so we push all 18.
-    func userToggleMixerSolo(channel: Int, bus: MixBus) {
-        guard (0..<18).contains(channel), let busIdx = bus.matrixIndex else { return }
-        let newValue = !mixerSolos[channel][busIdx]
-        mixerSolos[channel][busIdx] = newValue
+    /// Toggle the channel-wide solo, mirroring to the linked partner.
+    /// Solo affects the gain of *every* channel on *every* bus (any
+    /// non-soloed channel goes silent globally), so we re-push the
+    /// entire 18 × N matrix.
+    func userToggleMixerSolo(channel: Int) {
+        guard (0..<18).contains(channel) else { return }
+        let newValue = !mixerSolos[channel]
+        mixerSolos[channel] = newValue
         if let partner = linkedPartner(channel) {
-            mixerSolos[partner][busIdx] = newValue
+            mixerSolos[partner] = newValue
         }
+        // Solo affects effectiveGain for every channel.  Re-push all cells.
         for ch in 0..<18 {
-            pushCellGain(channel: ch, bus: bus)
+            pushAllCells(forChannel: ch)
         }
         saveMatrix()
+    }
+
+    /// Helper: push gain for `channel` to every mix bus.  Used when a
+    /// channel-wide field (mute / solo) changes — every bus this
+    /// channel feeds needs the new effective gain.
+    private func pushAllCells(forChannel channel: Int) {
+        for bus in MixBus.matrixOutputs {
+            pushCellGain(channel: channel, bus: bus)
+        }
     }
 
     private func pushCellGain(channel: Int, bus: MixBus) {
@@ -1290,18 +1309,11 @@ final class MixerState {
         guard sourcePair != destPair,
               (0...2).contains(sourcePair),
               (0...2).contains(destPair) else { return }
+        // Mute and solo are now channel-wide, so copying a pair only
+        // copies the per-pair level + pan into the destination.
         for ch in 0..<18 {
-            // Copy level/pan (per-pair).
             mixerLevels[ch][destPair] = mixerLevels[ch][sourcePair]
             mixerPans[ch][destPair]   = mixerPans[ch][sourcePair]
-            // Copy mute/solo (per-cell — both sides of the pair).
-            for offset in 0..<2 {
-                let srcIdx = sourcePair * 2 + offset
-                let dstIdx = destPair * 2 + offset
-                mixerMutes[ch][dstIdx] = mixerMutes[ch][srcIdx]
-                mixerSolos[ch][dstIdx] = mixerSolos[ch][srcIdx]
-            }
-            // Push the destination pair to the device.
             pushBusPair(channel: ch, pair: destPair)
         }
         saveMatrix()

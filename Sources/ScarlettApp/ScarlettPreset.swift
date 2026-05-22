@@ -3,7 +3,8 @@ import ScarlettCore
 
 /// A complete snapshot of every user-controllable bit of state — exactly the
 /// stuff a person would want to recall as "my podcast setup" or "tracking
-/// drums today".  Stored in UserDefaults; could later be exported as a file.
+/// drums today".  Persisted in UserDefaults (in-app preset list) and as
+/// `.8i6` JSON files via the File menu (Save snapshot / Open snapshot).
 public struct ScarlettPreset: Codable, Identifiable, Hashable {
     public let id: UUID
     public var name: String
@@ -13,12 +14,11 @@ public struct ScarlettPreset: Codable, Identifiable, Hashable {
     public var routes: [UInt16: UInt8]
 
     /// Matrix mixer state (parallel to MixerState fields).
-    public var mixerSources: [UInt8]    // SignalSource raw, 18 entries
-    public var mixerLevels:  [[Double]]?// 18 × 3 (channel × bus-pair)
-    public var mixerPans:    [[Double]]?// 18 × 3
-    public var mixerGains:   [[Double]]?// legacy 18 × 6 — decode-only
-    public var mixerMutes:   [[Bool]]   // 18 × 6
-    public var mixerSolos:   [[Bool]]   // 18 × 6
+    public var mixerSources: [UInt8]    // 18 × SignalSource raw byte
+    public var mixerLevels:  [[Double]] // 18 × 3 (channel × bus-pair)
+    public var mixerPans:    [[Double]] // 18 × 3
+    public var mixerMutes:   [Bool]     // 18 (per-channel)
+    public var mixerSolos:   [Bool]     // 18 (per-channel)
     public var mixerNames:   [String]   // 18
 
     /// Left-channel indices of linked stereo pairs.

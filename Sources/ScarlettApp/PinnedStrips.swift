@@ -50,9 +50,8 @@ struct PinnedDawStrip: View {
 
     private var fader: some View {
         let pair = MixerState.pairIndex(of: state.selectedBus)
-        let busIdx = state.selectedBus.matrixIndex ?? 0
         let level = state.mixerLevels[leftCh][pair]
-        let isMuted = state.mixerMutes[leftCh][busIdx]
+        let isMuted = state.mixerMutes[leftCh]
 
         return HStack(alignment: .center, spacing: 4) {
             VerticalFader(db: Binding(
@@ -115,15 +114,13 @@ struct PinnedDawStrip: View {
     }
 
     private var controls: some View {
-        let bus = state.selectedBus
-        let busIdx = bus.matrixIndex ?? 0
-        let isMuted = state.mixerMutes[leftCh][busIdx]
+        let isMuted = state.mixerMutes[leftCh]
         return HStack(spacing: 3) {
             Spacer(minLength: 0)
             StripButton(letter: "M", active: isMuted, activeColor: Theme.muteActive) {
                 let newValue = !isMuted
-                state.userSetMixerMute(channel: leftCh,  bus: bus, muted: newValue)
-                state.userSetMixerMute(channel: rightCh, bus: bus, muted: newValue)
+                state.userSetMixerMute(channel: leftCh,  muted: newValue)
+                state.userSetMixerMute(channel: rightCh, muted: newValue)
             }
             Spacer(minLength: 0)
         }
@@ -159,6 +156,8 @@ struct PinnedMasterStrip: View {
                     get: { state.monitorAtten },
                     set: { state.userSetMonitorAtten($0) }
                 ),
+                leftRoute: .monitorLeft,
+                rightRoute: .monitorRight,
                 leftMuted: state.monitorLMuted,
                 rightMuted: state.monitorRMuted,
                 toggleLeft: {
@@ -170,16 +169,6 @@ struct PinnedMasterStrip: View {
                 showDim: true,
                 dimActive: state.dimEnabled,
                 toggleDim: { state.userToggleDim() }
-                // Mn (Monitor Mono) deliberately disabled: even after
-                // matching MixControl's exact byte sequence (wValue=
-                // 0x0a01..0x0a05, wIndex=0x1400, wLength=1) and inserting
-                // 20ms inter-write delays, sending this command from our
-                // process makes the 8i6's firmware drop the USB
-                // connection.  MixControl likely performs an undocumented
-                // authorization handshake at startup that we haven't
-                // identified.  Code paths for `setMonitorMono`,
-                // `userSetMonitorMono`, etc. are kept around in case we
-                // ever crack the handshake.
             )
 
             OutputStrip(
@@ -190,6 +179,8 @@ struct PinnedMasterStrip: View {
                     get: { state.phonesAtten },
                     set: { state.userSetPhonesAtten($0) }
                 ),
+                leftRoute: .phonesLeft,
+                rightRoute: .phonesRight,
                 leftMuted: state.phonesLMuted,
                 rightMuted: state.phonesRMuted,
                 toggleLeft: {
@@ -209,14 +200,18 @@ struct PinnedMasterStrip: View {
 // MARK: - OutputStrip
 
 /// One vertical strip for an output pair (Monitor or Phones).
-/// Its meters follow whatever's currently routed to that output via
-/// `state.routes[leftRoute/rightRoute]` — so the strip really shows what's
-/// going to the physical jack, not a generic mix-bus reading.
+/// Its meters follow whatever's currently routed to that physical output —
+/// if Monitor L is routed from DAW 1 the meter shows DAW 1's level; if
+/// it's routed from Mix M1 the meter shows M1's level.
 struct OutputStrip: View {
     @Bindable var state: MixerState
     let title: String
     let subtitle: String
     @Binding var atten: Double
+    /// The Route enum cases for this strip's L and R outputs.  Used to
+    /// look up the current source via `state.routes[leftRoute]`.
+    let leftRoute: Route
+    let rightRoute: Route
     let leftMuted: Bool
     let rightMuted: Bool
     let toggleLeft: () -> Void
@@ -224,31 +219,11 @@ struct OutputStrip: View {
     let showDim: Bool
     let dimActive: Bool
     let toggleDim: () -> Void
-    var showMono: Bool = false
-    var monoActive: Bool = false
-    var toggleMono: () -> Void = {}
 
-    /// Output meters mirror the currently-selected mix bus pair so the user
-    /// sees the immediate effect of any matrix edit (muting a channel, moving
-    /// a fader). The actual signal hitting the physical jack depends on the
-    /// route, but the device doesn't expose post-router meters — and using
-    /// the route would mean meters don't move when you're editing the mix.
-    private var leftSource: MixBus {
-        switch MixerState.pairIndex(of: state.selectedBus) {
-        case 0: return .m1
-        case 1: return .m3
-        case 2: return .m5
-        default: return .off
-        }
-    }
-    private var rightSource: MixBus {
-        switch MixerState.pairIndex(of: state.selectedBus) {
-        case 0: return .m2
-        case 1: return .m4
-        case 2: return .m6
-        default: return .off
-        }
-    }
+    /// Source feeding the L/R output right now (per the router).
+    /// Defaults to .off when no route has been set yet.
+    private var leftSource:  MixBus { state.routes[leftRoute]  ?? .off }
+    private var rightSource: MixBus { state.routes[rightRoute] ?? .off }
 
     var body: some View {
         VStack(spacing: StripLayout.vSpacing) {
@@ -343,10 +318,6 @@ struct OutputStrip: View {
             if showDim {
                 StripButton(letter: "Dim", active: dimActive,
                             activeColor: Theme.soloActive, action: toggleDim)
-            }
-            if showMono {
-                StripButton(letter: "Mn", active: monoActive,
-                            activeColor: Theme.soloActive, action: toggleMono)
             }
             Spacer(minLength: 0)
         }

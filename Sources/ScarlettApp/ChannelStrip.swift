@@ -12,11 +12,9 @@ struct ChannelStrip: View {
     @FocusState private var nameFocused: Bool
 
     var body: some View {
-        let bus = state.selectedBus
-        let busIdx = bus.matrixIndex ?? 0
         let source = state.mixerSources[channel]
-        let isMuted = state.mixerMutes[channel][busIdx]
-        let isSoloed = state.mixerSolos[channel][busIdx]
+        let isMuted = state.mixerMutes[channel]
+        let isSoloed = state.mixerSolos[channel]
 
         VStack(spacing: StripLayout.vSpacing) {
             header(source: source)
@@ -145,9 +143,7 @@ struct ChannelStrip: View {
     // MARK: - Fader column
 
     private var fader: some View {
-        let bus = state.selectedBus
-        let busIdx = bus.matrixIndex ?? 0
-        let pair = MixerState.pairIndex(of: bus)
+        let pair = MixerState.pairIndex(of: state.selectedBus)
         let level = state.mixerLevels[channel][pair]
         let source = state.mixerSources[channel]
 
@@ -156,7 +152,7 @@ struct ChannelStrip: View {
                 get: { level },
                 set: { state.userSetMixerLevel(channel: channel, pair: pair, level: $0) }
             ))
-            .opacity(state.mixerMutes[channel][busIdx] ? 0.4 : 1.0)
+            .opacity(state.mixerMutes[channel] ? 0.4 : 1.0)
             .contextMenu {
                 Button("Reset fader to 0 dB") {
                     state.userSetMixerLevel(channel: channel, pair: pair, level: 0)
@@ -174,7 +170,7 @@ struct ChannelStrip: View {
         .overlay(alignment: .topTrailing) {
             Text(formatDb(level))
                 .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(state.mixerMutes[channel][busIdx] ? Theme.muteActive : Theme.textSecondary)
+                .foregroundStyle(state.mixerMutes[channel] ? Theme.muteActive : Theme.textSecondary)
                 .padding(.top, -16)
         }
     }
@@ -219,10 +215,10 @@ struct ChannelStrip: View {
         HStack(spacing: 3) {
             Spacer(minLength: 0)
             StripButton(letter: "M", active: isMuted, activeColor: Theme.muteActive) {
-                state.userToggleMixerMute(channel: channel, bus: state.selectedBus)
+                state.userToggleMixerMute(channel: channel)
             }
             StripButton(letter: "S", active: isSoloed, activeColor: Theme.soloActive) {
-                state.userToggleMixerSolo(channel: channel, bus: state.selectedBus)
+                state.userToggleMixerSolo(channel: channel)
             }
             LinkButton(active: state.isLinked(channel)) {
                 state.userToggleLink(channel: channel)

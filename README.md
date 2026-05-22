@@ -38,23 +38,23 @@ for the <strong>1st-generation Scarlett 8i6</strong>.
 
 ## ✨ Features
 
-|     |     |
-| --- | --- |
-| 🎛️ | **Full 18 × 6 matrix mixer** with per-cell gain, mute, solo, pan, stereo link |
-| 🔀 | **Output routing** — Monitor / Phones / S/PDIF can pick any source (DAW, Analog, Mix M1–M6) |
-| 🎤 | **USB capture routing** — choose what your DAW sees on each input channel |
-| 📌 | **Pinned DAW return strip** — DAW 1/2 back into the matrix with one linked fader |
-| 🔘 | **Hardware switches** — line/inst impedance, hi/lo gain, clock source, sample rate |
-| 📊 | **Live peak meters** — all 18 inputs + 6 mix buses + 6 DAW playbacks, with held peaks |
-| 💾 | **Save to hardware** — persist mixer state to device flash, survives power cycle |
-| 📁 | **Snapshots** — save / load full configurations as `.8i6` JSON files (⌘S / ⌘O) |
-| 🔌 | **Connection resilience** — auto-reconnect on USB drops, clear status overlay |
+|     |                                                                                             |
+| --- | ------------------------------------------------------------------------------------------- |
+| 🎛️  | **Full 18 × 6 matrix mixer** with per-cell gain, mute, solo, pan, stereo link               |
+| 🔀  | **Output routing** — Monitor / Phones / S/PDIF can pick any source (DAW, Analog, Mix M1–M6) |
+| 🎤  | **USB capture routing** — choose what your DAW sees on each input channel                   |
+| 📌  | **Pinned DAW return strip** — DAW 1/2 back into the matrix with one linked fader            |
+| 🔘  | **Hardware switches** — line/inst impedance, hi/lo gain, clock source, sample rate          |
+| 📊  | **Live peak meters** — all 18 inputs + 6 mix buses + 6 DAW playbacks, with held peaks       |
+| 💾  | **Save to hardware** — persist mixer state to device flash, survives power cycle            |
+| 📁  | **Snapshots** — save / load full configurations as `.8i6` JSON files (⌘S / ⌘O)              |
+| 🔌  | **Connection resilience** — auto-reconnect on USB drops, clear status overlay               |
 
 <br/>
 
 ## 📦 Installation
 
-### Download a release  *(recommended)*
+### Download a release _(recommended)_
 
 1. Grab `Scarlett.MixControl.app.zip` from the [**latest release**](https://github.com/MarecekW/scarlett-mixcontrol-1stgen/releases/latest).
 2. Unzip and drag `Scarlett MixControl.app` to `/Applications`.
@@ -79,18 +79,18 @@ For dev iteration without packaging: `swift run scarlett-app`. There's also a `s
 
 ## 🎯 Compatibility
 
-| Device | Status |
-| --- | --- |
-| **Scarlett 8i6** *(1st gen)* | ✅ &nbsp; Officially supported — tested on macOS 14+ |
-| Scarlett 6i6 *(1st gen)*     | 🟡 &nbsp; Detected, support pending |
-| Scarlett 16i8 *(1st gen)*    | 🟡 &nbsp; Detected, support pending |
-| Scarlett 18i6 *(1st gen)*    | 🟡 &nbsp; Detected, support pending |
-| Scarlett 18i8 *(1st gen)*    | 🟡 &nbsp; Detected, support pending |
-| Scarlett 18i20 *(1st gen)*   | 🟡 &nbsp; Detected, support pending |
-| Scarlett 2nd / 3rd / 4th gen | ❌ &nbsp; Different protocol — won't work |
-| Saffire (FireWire) family    | ❌ &nbsp; Different transport — won't work |
+| Device                       | Status                                               |
+| ---------------------------- | ---------------------------------------------------- |
+| **Scarlett 8i6** _(1st gen)_ | ✅ &nbsp; Officially supported — tested on macOS 14+ |
+| Scarlett 6i6 _(1st gen)_     | 🟡 &nbsp; Detected, support pending                  |
+| Scarlett 16i8 _(1st gen)_    | 🟡 &nbsp; Detected, support pending                  |
+| Scarlett 18i6 _(1st gen)_    | 🟡 &nbsp; Detected, support pending                  |
+| Scarlett 18i8 _(1st gen)_    | 🟡 &nbsp; Detected, support pending                  |
+| Scarlett 18i20 _(1st gen)_   | 🟡 &nbsp; Detected, support pending                  |
+| Scarlett 2nd / 3rd / 4th gen | ❌ &nbsp; Different protocol — won't work            |
+| Saffire (FireWire) family    | ❌ &nbsp; Different transport — won't work           |
 
-> 🟡 The app will *recognise* other 1st-gen Scarletts on the bus and show a friendly "not yet supported" screen — it won't try to drive them with the wrong byte tables.
+> 🟡 The app will _recognise_ other 1st-gen Scarletts on the bus and show a friendly "not yet supported" screen — it won't try to drive them with the wrong byte tables.
 
 <br/>
 
@@ -107,11 +107,11 @@ The protocol itself was reverse-engineered by extracting the per-product signal 
 
 **The three routing dimensions:**
 
-| `wIndex` | Purpose | UI surface |
-| --- | --- | --- |
+| `wIndex` | Purpose                   | UI surface                                 |
+| -------- | ------------------------- | ------------------------------------------ |
 | `0x3200` | Matrix-mixer input source | Source picker on each matrix channel strip |
-| `0x3300` | Physical output routing | "Output assignments" panel in Routing tab |
-| `0x3400` | USB capture routing | "USB capture" panel in Routing tab |
+| `0x3300` | Physical output routing   | "Output assignments" panel in Routing tab  |
+| `0x3400` | USB capture routing       | "USB capture" panel in Routing tab         |
 
 **Firmware quirks worth knowing:**
 
@@ -142,7 +142,7 @@ If you have one of these devices and want to help, see the [Contributing guide](
 Standing on shoulders:
 
 - [**@x42** (Robin Gareus)](https://github.com/x42) — original Python reverse-engineering of the Scarlett 18i6 protocol in [`scarlettmixer`](https://github.com/x42/scarlettmixer). Many `wValue` / `wIndex` constants were first documented in his code.
-- **Linux kernel** — `sound/usb/mixer_scarlett.c` was an essential cross-reference, even where its 8i6 byte tables turned out to be marked *"untested..."* (and indeed wrong about S/PDIF and Mix bus bytes).
+- **Linux kernel** — `sound/usb/mixer_scarlett.c` was an essential cross-reference, even where its 8i6 byte tables turned out to be marked _"untested..."_ (and indeed wrong about S/PDIF and Mix bus bytes).
 - [**@geoffreybennett** (Geoffrey Bennett)](https://github.com/geoffreybennett) — author of [`alsa-scarlett-gui`](https://github.com/geoffreybennett/alsa-scarlett-gui), the most thorough open-source Scarlett control panel for Linux.
 - **Focusrite** — for shipping a control panel binary on their support site that didn't strip its data tables.
 
