@@ -8,6 +8,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        // Force AppKit-backed controls (Picker .menu = NSPopUpButton, Menu,
+        // context menus, etc.) to use dark appearance regardless of the
+        // user's system setting. SwiftUI's .preferredColorScheme only
+        // affects SwiftUI views, not the embedded AppKit controls.
+        NSApp.appearance = NSAppearance(named: .darkAqua)
     }
 }
 
@@ -23,8 +28,8 @@ struct ScarlettApp: App {
                     minWidth: 960,
                     idealWidth: 1340,
                     maxWidth: .infinity,
-                    minHeight: 700,
-                    idealHeight: 860,
+                    minHeight: 620,
+                    idealHeight: 720,
                     maxHeight: .infinity
                 )
         }

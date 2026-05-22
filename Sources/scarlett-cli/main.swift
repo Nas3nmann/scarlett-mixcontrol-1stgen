@@ -109,7 +109,7 @@ func parseSignalSource(_ s: String) throws -> SignalSource {
     }
 }
 
-func parseMixMat(_ s: String) throws -> MixMatOut {
+func parseMixMat(_ s: String) throws -> MixBus {
     switch s.lowercased() {
     case "m1": return .m1; case "m2": return .m2; case "m3": return .m3
     case "m4": return .m4; case "m5": return .m5; case "m6": return .m6
@@ -224,8 +224,9 @@ func main() throws {
         }
         print()
         print("Matrix mixer gains, channel 0 → M1..M6:")
-        for bus in MixMatOut.allCases {
-            let mtx = UInt16(0 << 3) + UInt16(bus.rawValue & 0x07)
+        for bus in MixBus.matrixOutputs {
+            guard let idx = bus.matrixIndex else { continue }
+            let mtx = UInt16(0 << 3) + UInt16(idx)
             let raw = (try? dev.controlIn(cmd: 0x01, value: 0x0100 + mtx, index: 0x3c00, length: 2)) ?? []
             let rawHex = raw.map { String(format: "%02x", $0) }.joined(separator: " ")
             let g = tryRead("mgain") { String(format: "%.1f dB", try dev.getMixerGain(channel: 0, bus: bus)) }

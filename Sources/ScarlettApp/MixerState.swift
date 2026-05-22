@@ -1,6 +1,18 @@
 import Foundation
 import Observation
+import AppKit
+import CoreAudio
+import IOKit
 import ScarlettCore
+
+/// High-level connection state of the Scarlett 8i6.  Tracked separately from
+/// the device handle so the UI can render meaningful "waiting" / "disconnected"
+/// states distinct from "open but erroring on a single transfer".
+public enum ConnectionState: Equatable {
+    case waiting               // App is up, nothing plugged in yet
+    case connected             // Device handle opened and last poll succeeded
+    case disconnected(String)  // Was connected, lost — reason for display
+}
 
 // View model holding the live device handle, the latest peak meter reading,
 // and the user's current slider/toggle positions. Writes to the device are
@@ -12,9 +24,19 @@ import ScarlettCore
 final class MixerState {
     // MARK: - Connection
     var device: ScarlettDevice?
-    var connectionError: String?
+    var connection: ConnectionState = .waiting
     var firmware: String = "—"
     var serial: String = "—"
+
+    /// Convenience for the (very common) `is the device usable right now` check.
+    var isConnected: Bool { connection == .connected }
+
+    /// Back-compat: existing call sites read a single error string. Surfaces
+    /// the most recent disconnect reason, otherwise nil.
+    var connectionError: String? {
+        if case .disconnected(let reason) = connection { return reason }
+        return nil
+    }
 
     /// Serial queue used to push USB writes off the main actor.  USB control
     /// transfers are fast (microseconds) but synchronous, and SwiftUI sliders
@@ -83,16 +105,12 @@ final class MixerState {
     var phonesLMuted:  Bool = false
     var phonesRMuted:  Bool = false
 
-    // Matrix mixer: 18 input channels × 6 mix buses (M1..M6).
-    // mixerSources[ch] is the signal feeding matrix channel `ch`.
-    // mixerGains[ch][bus] is the user-set gain in dB of channel `ch` going to bus
-    // M(bus+1) — i.e., what the slider shows. Mute and solo override what we
-    // actually send to the device without changing the slider's stored value.
+    // Matrix mixer: 18 input channels × 6 mix buses (M1..M6).  The user-
+    // facing knobs are `mixerLevels` + `mixerPans` + `mixerMutes` + `mixerSolos`.
+    // Per-cell gain that actually hits the device is computed on demand by
+    // `effectiveGain(...)` from those four fields — there is no separate
+    // stored "mixerGains" cache.
     var mixerSources: [SignalSource] = Array(repeating: .off, count: 18)
-    /// Per-cell gains kept around so we always know what's actually on the
-    /// device — but the user-facing controls are `mixerLevels` + `mixerPans`,
-    /// which produce these values via `cellGain(level:pan:isLeft:)`.
-    var mixerGains: [[Double]] = Array(repeating: Array(repeating: 0, count: 6), count: 18)
     /// One fader value per channel per stereo bus pair (M1+M2, M3+M4, M5+M6).
     /// Range -60…+6 dB, default 0.
     var mixerLevels: [[Double]] = Array(repeating: Array(repeating: 0, count: 3), count: 18)
@@ -110,11 +128,27 @@ final class MixerState {
 
     /// User-saved presets (full snapshots of routes + matrix + names + links).
     var presets: [ScarlettPreset] = []
-    var selectedBus: MixMatOut = .m1 {
+
+    /// Capped event log — surfaced in the Device tab.  Newest first.
+    var deviceEvents: [DeviceEvent] = []
+    @ObservationIgnored private let maxEvents = 100
+    @ObservationIgnored private var coreAudioListenerInstalled = false
+    @ObservationIgnored private var lastCoreAudioPresence: Bool = false
+    var selectedBus: MixBus = .m1 {
         didSet { saveSelectedBus() }
     }
 
     init() {
+        installCoreAudioListener()
+        attemptConnect()
+    }
+
+    /// Try to (re-)open the device and refresh all state.  Idempotent.
+    /// On success: switches to `.connected` and re-pushes persisted routes.
+    /// On `deviceNotFound`: switches to `.waiting` (silent — happens at idle).
+    /// On any other failure: switches to `.disconnected(reason)`.
+    func attemptConnect() {
+        let wasConnected = isConnected
         do {
             let dev = try ScarlettDevice()
             self.device = dev
@@ -128,9 +162,137 @@ final class MixerState {
             self.serial = dev.serialNumber() ?? "—"
             refreshFromDevice()
             loadPersistedState()
+            ensurePinnedDawChannels()
+            if !wasConnected {
+                logEvent(.info, "Connection",
+                         "Connected to Scarlett 8i6 (firmware \(firmware), serial \(serial))")
+            }
+            connection = .connected
+        } catch ScarlettError.deviceNotFound {
+            self.device = nil
+            // Clear meters so we don't show stale levels frozen from before.
+            peaks = .empty
+            peaksHeld = .empty
+            if wasConnected {
+                logEvent(.warning, "Connection", "Device went away")
+                connection = .disconnected("Device not found")
+            } else if connection != .waiting {
+                // Came back from disconnect → return to waiting until we find it.
+                connection = .waiting
+            }
         } catch {
-            self.connectionError = "\(error)"
+            self.device = nil
+            peaks = .empty
+            peaksHeld = .empty
+            if connection != .disconnected("\(error)") {
+                logEvent(.error, "Connection", "Open device failed: \(error)")
+            }
+            connection = .disconnected("\(error)")
         }
+    }
+
+    /// Returns true if the IOKit error code looks like a device that's gone
+    /// (unplugged, hung, or otherwise un-talkable to).  Anything else is
+    /// treated as a transient that we'll just retry.
+    private static func isDisconnectError(_ err: Swift.Error) -> Bool {
+        guard let e = err as? ScarlettError,
+              case let .ioReturn(_, code) = e else { return false }
+        return code == kIOReturnNoDevice
+            || code == kIOReturnNotAttached
+            || code == kIOReturnNotResponding
+            || code == kIOReturnAborted
+    }
+
+    // MARK: - Event log
+
+    func logEvent(_ severity: DeviceEvent.Severity, _ category: String, _ message: String) {
+        let event = DeviceEvent(timestamp: Date(), severity: severity,
+                                category: category, message: message)
+        deviceEvents.insert(event, at: 0)
+        if deviceEvents.count > maxEvents { deviceEvents.removeLast() }
+    }
+
+    func clearDeviceEvents() { deviceEvents = [] }
+
+    // MARK: - Core Audio device presence
+
+    /// Listen for the Scarlett appearing in or disappearing from Core Audio's
+    /// device list. Independent from USB polling — even if USB transfers keep
+    /// succeeding, this catches cases where macOS's audio HAL drops the
+    /// device (or it shows up after a hot-plug).
+    private func installCoreAudioListener() {
+        guard !coreAudioListenerInstalled else { return }
+        coreAudioListenerInstalled = true
+        lastCoreAudioPresence = Self.scarlettPresentInCoreAudio()
+
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            guard let self else { return }
+            let present = Self.scarlettPresentInCoreAudio()
+            Task { @MainActor in
+                guard present != self.lastCoreAudioPresence else { return }
+                self.lastCoreAudioPresence = present
+                if present {
+                    self.logEvent(.info, "Core Audio",
+                                  "Scarlett 8i6 visible to Core Audio")
+                    // Device just appeared — kick a connect attempt so we
+                    // don't wait the full 2 s for the polling loop's retry.
+                    if !self.isConnected { self.attemptConnect() }
+                } else {
+                    self.logEvent(.warning, "Core Audio",
+                                  "Scarlett 8i6 disappeared from Core Audio device list")
+                    if self.isConnected {
+                        self.device = nil
+                        self.connection = .disconnected("Removed from Core Audio")
+                        self.peaks = .empty
+                        self.peaksHeld = .empty
+                    }
+                }
+            }
+        }
+        _ = AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &addr, DispatchQueue.main, listener
+        )
+    }
+
+    private static func scarlettPresentInCoreAudio() -> Bool {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size
+        ) == noErr, size > 0 else { return false }
+        let count = Int(size) / MemoryLayout<AudioDeviceID>.size
+        var ids = [AudioDeviceID](repeating: 0, count: count)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &ids
+        ) == noErr else { return false }
+        return ids.contains { deviceNameContainsScarlett($0) }
+    }
+
+    private static func deviceNameContainsScarlett(_ id: AudioDeviceID) -> Bool {
+        var nameAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var name: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        let kr = withUnsafeMutablePointer(to: &name) { ptr -> OSStatus in
+            AudioObjectGetPropertyData(id, &nameAddr, 0, nil, &size, ptr)
+        }
+        guard kr == noErr, let cfName = name?.takeRetainedValue() as String? else {
+            return false
+        }
+        return cfName.lowercased().contains("scarlett")
     }
 
     // MARK: - UserDefaults persistence
@@ -149,13 +311,14 @@ final class MixerState {
     private static let presetsKey = "scarlett.presets.v1"
 
     private struct PersistedMatrix: Codable {
-        var gains: [[Double]]        // legacy per-cell gains (kept for backward compat)
-        var levels: [[Double]]?      // new: per-channel-per-pair level
-        var pans: [[Double]]?        // new: per-channel-per-pair pan
+        var gains: [[Double]]?       // legacy, no longer written, kept for decode-only
+        var levels: [[Double]]?      // per-channel-per-pair level
+        var pans: [[Double]]?        // per-channel-per-pair pan
         var mutes: [[Bool]]
         var solos: [[Bool]]
         var names: [String]
         var linkedLefts: [Int]?
+        var sources: [UInt8]?        // SignalSource.rawValue per matrix channel
     }
 
     private func loadPersistedState() {
@@ -175,20 +338,18 @@ final class MixerState {
         }
 
         // Selected bus tab
+        // Persisted bus index is the matrix-index (0..5), not the byte value,
+        // for stability across enum byte-value changes.
         if let raw = defaults.object(forKey: Self.busTabKey) as? UInt8,
-           let bus = MixMatOut(rawValue: raw) {
-            selectedBus = bus
+           raw < UInt8(MixBus.matrixOutputs.count) {
+            selectedBus = MixBus.matrixOutputs[Int(raw)]
         }
 
-        // Matrix state: names + mute/solo flags + intended gains.
+        // Matrix state: mute/solo/names/links/sources/levels/pans.
         //
-        // After refreshFromDevice, mixerGains already holds whatever the
-        // hardware reports.  For cells that the user had MUTED last session
-        // the device returns -128 (because we wrote that as the effective
-        // value); the user's intended slider position lives only in our
-        // saved snapshot.  We restore that intended value when the saved
-        // mute flag says the cell was muted — so unmuting later restores
-        // a meaningful gain.
+        // Saved level + pan are the authoritative source — we re-push every
+        // cell to the device after loading so the hardware reflects what
+        // the UI says regardless of what state the device booted in.
         if let data = defaults.data(forKey: Self.matrixKey),
            let m = try? JSONDecoder().decode(PersistedMatrix.self, from: data) {
             if m.mutes.count == 18 && m.mutes.allSatisfy({ $0.count == 6 }) {
@@ -203,21 +364,11 @@ final class MixerState {
             if let lefts = m.linkedLefts {
                 linkedPairs = Set(lefts)
             }
-            if m.gains.count == 18 && m.gains.allSatisfy({ $0.count == 6 }) {
+            if let srcs = m.sources, srcs.count == 18 {
                 for ch in 0..<18 {
-                    for bus in 0..<6 {
-                        let soloActive = (0..<18).contains { mixerSolos[$0][bus] }
-                        let overridden = mixerMutes[ch][bus] || (soloActive && !mixerSolos[ch][bus])
-                        if overridden {
-                            mixerGains[ch][bus] = m.gains[ch][bus]
-                        }
-                    }
+                    if let v = SignalSource(rawValue: srcs[ch]) { mixerSources[ch] = v }
                 }
             }
-
-            // Prefer saved level/pan if available; the device-derived values
-            // computed earlier may not perfectly round-trip through quantised
-            // cell gains, so the saved version is the better source of truth.
             if let lvls = m.levels, lvls.count == 18, lvls.allSatisfy({ $0.count == 3 }) {
                 mixerLevels = lvls
             }
@@ -225,16 +376,12 @@ final class MixerState {
                 mixerPans = pns
             }
 
-            // Make sure the device actually reflects our mute/solo state in
-            // case it was power-cycled between sessions.
-            if let _ = device {
+            // Re-push every cell so the device matches the saved state — even
+            // if it was power-cycled between sessions.
+            if device != nil {
                 for ch in 0..<18 {
-                    for bus in MixMatOut.allCases {
-                        let idx = Int(bus.rawValue)
-                        let soloActive = (0..<18).contains { mixerSolos[$0][idx] }
-                        if mixerMutes[ch][idx] || (soloActive && !mixerSolos[ch][idx]) {
-                            pushCellGain(channel: ch, bus: bus)
-                        }
+                    for bus in MixBus.matrixOutputs {
+                        pushCellGain(channel: ch, bus: bus)
                     }
                 }
             }
@@ -256,16 +403,20 @@ final class MixerState {
     }
 
     private func saveSelectedBus() {
-        UserDefaults.standard.set(selectedBus.rawValue, forKey: Self.busTabKey)
+        // Save the matrix index (0..5) rather than the raw byte so the
+        // persisted value survives any future enum byte-value change.
+        UserDefaults.standard.set(UInt8(selectedBus.matrixIndex ?? 0), forKey: Self.busTabKey)
     }
 
     private func saveMatrix() {
         let m = PersistedMatrix(
-            gains: mixerGains,
+            gains: nil,                          // legacy field, no longer written
             levels: mixerLevels,
             pans: mixerPans,
             mutes: mixerMutes, solos: mixerSolos,
-            names: mixerNames, linkedLefts: Array(linkedPairs)
+            names: mixerNames,
+            linkedLefts: Array(linkedPairs),
+            sources: mixerSources.map { $0.rawValue }
         )
         if let data = try? JSONEncoder().encode(m) {
             UserDefaults.standard.set(data, forKey: Self.matrixKey)
@@ -303,33 +454,37 @@ final class MixerState {
            let r = try? dev.getAttenuation(.monitorRight) { monitorAtten = (l + r) / 2 }
         if let l = try? dev.getAttenuation(.phonesLeft),
            let r = try? dev.getAttenuation(.phonesRight)  { phonesAtten = (l + r) / 2 }
-        // NOTE: routing GETs always return 00 00 on the 1st-gen 8i6 regardless
-        // of what was last SET — the firmware accepts writes to wIndex=0x3300
-        // but exposes no readable state. So we don't read them; the pickers
-        // show "Off" until the user actively chooses something.
+        // Routing GETs are still not trustworthy: byte 0x00 decodes to
+        // .daw1, which is also what we'd get from a "null" 00 00 response.
+        // We can't distinguish "device says DAW 1" from "device says
+        // nothing" with a single read. Rely on UserDefaults to restore the
+        // user's last routing — that's what loadPersistedState() does.
+        // (A future protocol-fluency improvement: send a SET, read back, and
+        // only trust GETs if the round-trip works.)
 
-        // Matrix mixer DOES read back correctly. 18 source reads + 18*6 = 108
-        // gain reads. Each is a single USB control transfer of microseconds,
-        // so the whole batch costs a few ms.
+        // Matrix mixer reads correctly: 18 source reads + 18*6 = 108 gain
+        // reads.  We pull them all into a local [[Double]] just long enough
+        // to derive the user-facing level + pan model — there's no separate
+        // persistent gains field.
+        var snapshotGains: [[Double]] = Array(repeating: Array(repeating: 0, count: 6),
+                                              count: 18)
         for ch in 0..<18 {
             if let v = try? dev.getMixerSource(channel: ch) {
                 mixerSources[ch] = v
             }
-            for bus in MixMatOut.allCases {
+            for bus in MixBus.matrixOutputs {
+                guard let idx = bus.matrixIndex else { continue }
                 if let v = try? dev.getMixerGain(channel: ch, bus: bus) {
-                    mixerGains[ch][Int(bus.rawValue)] = v
+                    snapshotGains[ch][idx] = v
                 }
             }
         }
-
-        // Derive the level + pan model from whatever per-cell gains the
-        // device just reported.  Done after refreshFromDevice so the level/
-        // pan UI starts in sync with reality.
         for ch in 0..<18 {
             for pair in 0..<3 {
-                let g_L = mixerGains[ch][pair * 2]
-                let g_R = mixerGains[ch][pair * 2 + 1]
-                let (level, pan) = Self.deriveLevelAndPan(left: g_L, right: g_R)
+                let (level, pan) = Self.deriveLevelAndPan(
+                    left:  snapshotGains[ch][pair * 2],
+                    right: snapshotGains[ch][pair * 2 + 1]
+                )
                 mixerLevels[ch][pair] = level
                 mixerPans[ch][pair] = pan
             }
@@ -342,8 +497,27 @@ final class MixerState {
         Task { @MainActor [weak self] in
             var lastTick = Date()
             while !Task.isCancelled {
-                guard let self, let dev = self.device else {
-                    try? await Task.sleep(nanoseconds: 200_000_000)
+                guard let self else { return }
+
+                // Not connected → periodically retry opening the device.
+                guard let dev = self.device, self.isConnected else {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    self.attemptConnect()
+                    lastTick = Date()
+                    continue
+                }
+
+                // Keep polling whenever the window is visible on screen —
+                // even if our app isn't the frontmost — so a user can park
+                // the meter window behind something else and still watch it.
+                // Only back off when the window is genuinely hidden:
+                // minimised to dock, or the app itself hidden (Cmd+H).
+                let windowVisible = NSApp.windows.contains { win in
+                    win.occlusionState.contains(.visible) && !win.isMiniaturized
+                }
+                if NSApp.isHidden || !windowVisible {
+                    try? await Task.sleep(nanoseconds: 500_000_000)   // 2 Hz
+                    lastTick = Date()
                     continue
                 }
                 let now = Date()
@@ -353,20 +527,43 @@ final class MixerState {
 
                 do {
                     let p = try dev.readPeaks()
+                    if self.metersStale {
+                        self.logEvent(.info, "USB", "Meter polling resumed")
+                    }
                     self.peaks = p
-                    self.peaksHeld = PeakReading(
-                        inputs: zip(p.inputs, self.peaksHeld.inputs).map { max($0.0, $0.1 - decay) },
-                        daw:    zip(p.daw,    self.peaksHeld.daw   ).map { max($0.0, $0.1 - decay) },
-                        mixer:  zip(p.mixer,  self.peaksHeld.mixer ).map { max($0.0, $0.1 - decay) }
-                    )
-                    self.peaksMax = PeakReading(
-                        inputs: zip(p.inputs, self.peaksMax.inputs).map { max($0.0, $0.1) },
-                        daw:    zip(p.daw,    self.peaksMax.daw   ).map { max($0.0, $0.1) },
-                        mixer:  zip(p.mixer,  self.peaksMax.mixer ).map { max($0.0, $0.1) }
-                    )
+                    // (no need to re-assign `connection` here — by the time
+                    // we're successfully reading peaks we're already in
+                    // .connected; `attemptConnect()` sets it.)
+
+                    // Mutate in-place rather than allocating 6 new arrays per
+                    // poll via zip+map. CoW means a single backing-store copy
+                    // at most, and the SwiftUI @Observable notification fires
+                    // once when we re-assign each top-level field.
+                    var held = self.peaksHeld
+                    var max_ = self.peaksMax
+                    for i in 0..<held.inputs.count { held.inputs[i] = max(p.inputs[i], held.inputs[i] - decay) }
+                    for i in 0..<held.daw.count    { held.daw[i]    = max(p.daw[i],    held.daw[i]    - decay) }
+                    for i in 0..<held.mixer.count  { held.mixer[i]  = max(p.mixer[i],  held.mixer[i]  - decay) }
+                    for i in 0..<max_.inputs.count { max_.inputs[i] = max(p.inputs[i], max_.inputs[i]) }
+                    for i in 0..<max_.daw.count    { max_.daw[i]    = max(p.daw[i],    max_.daw[i]) }
+                    for i in 0..<max_.mixer.count  { max_.mixer[i]  = max(p.mixer[i],  max_.mixer[i]) }
+                    self.peaksHeld = held
+                    self.peaksMax  = max_
+
                     self.metersStale = false
                 } catch {
+                    if !self.metersStale {
+                        self.logEvent(.warning, "USB", "Meter polling failed: \(error)")
+                    }
                     self.metersStale = true
+                    if Self.isDisconnectError(error) {
+                        self.logEvent(.error, "Connection", "Device disconnected during transfer")
+                        self.device = nil
+                        self.connection = .disconnected("\(error)")
+                        self.peaks = .empty
+                        self.peaksHeld = .empty
+                        continue
+                    }
                 }
 
                 // Re-read sync status roughly every second so the indicator
@@ -375,11 +572,23 @@ final class MixerState {
                 if self.syncPollAccumulator >= 1.0 {
                     self.syncPollAccumulator = 0
                     if let s = try? dev.getSyncLocked() {
+                        if s != self.syncLocked {
+                            self.logEvent(
+                                s ? .info : .warning,
+                                "Clock",
+                                s ? "Clock locked" : "Clock lost lock"
+                            )
+                        }
                         self.syncLocked = s
                     }
                 }
 
-                try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms → 20 Hz
+                // 83 ms ≈ 12 Hz. Each readPeaks() does 3 USB control transfers
+                // (inputs/DAW/mixer) which aren't free on macOS — kernel
+                // transitions ~1-5 ms each — so polling alone is most of our
+                // idle CPU. 12 Hz still looks smooth and roughly halves CPU
+                // vs the 20 Hz default we started with.
+                try? await Task.sleep(nanoseconds: 83_000_000)
             }
         }
     }
@@ -504,14 +713,73 @@ final class MixerState {
         }
     }
 
-    static func pairIndex(of bus: MixMatOut) -> Int { Int(bus.rawValue) / 2 }
-    static func isLeftSide(of bus: MixMatOut) -> Bool { bus.rawValue % 2 == 0 }
+    // Kept as static thunks for source compatibility with existing callers —
+    // they just defer to MixBus's own computed properties.
+    static func pairIndex(of bus: MixBus) -> Int { bus.stereoPairIndex ?? 0 }
+    static func isLeftSide(of bus: MixBus) -> Bool { bus.isLeftOfPair }
 
     func userSetMixerSource(channel: Int, source: SignalSource) {
         guard (0..<18).contains(channel) else { return }
         mixerSources[channel] = source
         guard let dev = device else { return }
         writeAsync { try? dev.setMixerSource(channel: channel, source: source) }
+    }
+
+    // MARK: - Pinned DAW return
+    //
+    // Matrix channels 14 & 15 are reserved as the "DAW return" controlled by
+    // `PinnedDawStrip` (the column pinned to the left of the matrix). They
+    // are sourced from DAW 1 and DAW 2 respectively, hard-panned to opposite
+    // sides of every bus pair, and marked as a linked stereo pair so fader /
+    // mute changes on one mirror to the other automatically.
+    //
+    // Re-asserted on every successful connect — if the device was power-cycled
+    // or somebody else changed those channels, we put them back the way the
+    // UI expects.
+
+    /// Channel indices of the pinned DAW pair.
+    public static let pinnedDawLeftChannel: Int  = 14
+    public static let pinnedDawRightChannel: Int = 15
+
+    private func ensurePinnedDawChannels() {
+        let l = Self.pinnedDawLeftChannel
+        let r = Self.pinnedDawRightChannel
+
+        // Per x42's docs, the device refuses to double-assign a source: if
+        // DAW 1 is already wired to (say) ch 0 from the factory default, a
+        // bare `setMixerSource(14, .daw1)` is silently rejected and ch 14
+        // stays pointed at whatever it was sourced from before.  We have to
+        // disconnect the existing owner with `.off` first.
+        assignPinnedSource(channel: l, source: .daw1)
+        assignPinnedSource(channel: r, source: .daw2)
+
+        for pair in 0..<3 {
+            if mixerPans[l][pair] != -1 { userSetMixerPan(channel: l, pair: pair, pan: -1) }
+            if mixerPans[r][pair] !=  1 { userSetMixerPan(channel: r, pair: pair, pan:  1) }
+        }
+        if !linkedPairs.contains(l) {
+            linkedPairs.insert(l)
+            saveMatrix()
+        }
+    }
+
+    /// Helper for `ensurePinnedDawChannels`: claim a specific source for one
+    /// channel, disconnecting it from any other channel that currently holds
+    /// it.  Skips work if the target already has the desired source.
+    private func assignPinnedSource(channel target: Int, source desired: SignalSource) {
+        guard (0..<18).contains(target) else { return }
+        if mixerSources[target] == desired { return }
+
+        // Disconnect any other channel that currently has this source —
+        // otherwise the device won't reassign it to us.
+        for ch in 0..<18 where ch != target && mixerSources[ch] == desired {
+            userSetMixerSource(channel: ch, source: .off)
+        }
+
+        // Now claim it on the target.  These writes are queued on the same
+        // serial USB queue, so the disconnect above lands before the new
+        // assignment hits the device.
+        userSetMixerSource(channel: target, source: desired)
     }
 
     // MARK: - Stereo link
@@ -563,10 +831,12 @@ final class MixerState {
     }
 
     private func pushBusPair(channel: Int, pair: Int) {
-        guard let leftBus  = MixMatOut(rawValue: UInt8(pair * 2)),
-              let rightBus = MixMatOut(rawValue: UInt8(pair * 2 + 1)) else { return }
-        pushCellGain(channel: channel, bus: leftBus)
-        pushCellGain(channel: channel, bus: rightBus)
+        let outs = MixBus.matrixOutputs
+        let leftIdx = pair * 2
+        let rightIdx = pair * 2 + 1
+        guard leftIdx < outs.count, rightIdx < outs.count else { return }
+        pushCellGain(channel: channel, bus: outs[leftIdx])
+        pushCellGain(channel: channel, bus: outs[rightIdx])
     }
 
     func userSetChannelName(channel: Int, name: String) {
@@ -580,24 +850,38 @@ final class MixerState {
         peaksMax = .empty
     }
 
-    /// Reset the all-time max peak for one signal source only — used when the
-    /// user clicks the "Mx" readout on a single channel strip.
-    func clearMaxPeak(forSource source: SignalSource) {
+    /// Reset the all-time max peak for one signal source / mix-bus source.
+    /// Both old call-sites (`forSource`, `forMixBus`) collapse into this one
+    /// once we map a `SignalSource` to its `MixBus` equivalent.
+    func clearMaxPeak(_ source: MixBus) {
         switch source {
-        case .analog1: peaksMax.inputs[0] = -.infinity
-        case .analog2: peaksMax.inputs[1] = -.infinity
-        case .analog3: peaksMax.inputs[2] = -.infinity
-        case .analog4: peaksMax.inputs[3] = -.infinity
-        case .spdif1:  peaksMax.inputs[8] = -.infinity
-        case .spdif2:  peaksMax.inputs[9] = -.infinity
         case .daw1:    peaksMax.daw[0] = -.infinity
         case .daw2:    peaksMax.daw[1] = -.infinity
         case .daw3:    peaksMax.daw[2] = -.infinity
         case .daw4:    peaksMax.daw[3] = -.infinity
         case .daw5:    peaksMax.daw[4] = -.infinity
         case .daw6:    peaksMax.daw[5] = -.infinity
-        default: break
+        case .analog1: peaksMax.inputs[0] = -.infinity
+        case .analog2: peaksMax.inputs[1] = -.infinity
+        case .analog3: peaksMax.inputs[2] = -.infinity
+        case .analog4: peaksMax.inputs[3] = -.infinity
+        case .spdif1:  peaksMax.inputs[8] = -.infinity
+        case .spdif2:  peaksMax.inputs[9] = -.infinity
+        case .m1:      peaksMax.mixer[0] = -.infinity
+        case .m2:      peaksMax.mixer[1] = -.infinity
+        case .m3:      peaksMax.mixer[2] = -.infinity
+        case .m4:      peaksMax.mixer[3] = -.infinity
+        case .m5:      peaksMax.mixer[4] = -.infinity
+        case .m6:      peaksMax.mixer[5] = -.infinity
+        case .off, .daw7, .daw8, .daw9, .daw10, .daw11, .daw12: break
         }
+    }
+
+    /// Convenience wrapper so `SignalSource`-typed call-sites (matrix-channel
+    /// strips) don't need to construct a `MixBus` themselves.  Every valid
+    /// `SignalSource` has the same raw byte value in `MixBus`.
+    func clearMaxPeak(forSource source: SignalSource) {
+        clearMaxPeak(MixBus(rawValue: source.rawValue) ?? .off)
     }
 
     // MARK: - Presets
@@ -613,12 +897,14 @@ final class MixerState {
             routes: Dictionary(uniqueKeysWithValues:
                 routes.map { ($0.key.rawValue, $0.value.rawValue) }),
             mixerSources: mixerSources.map { $0.rawValue },
-            mixerGains: mixerGains,
+            mixerLevels: mixerLevels,
+            mixerPans: mixerPans,
+            mixerGains: nil,                  // legacy field — no longer written
             mixerMutes: mixerMutes,
             mixerSolos: mixerSolos,
             mixerNames: mixerNames,
             linkedLefts: Array(linkedPairs),
-            selectedBus: selectedBus.rawValue
+            selectedBus: UInt8(selectedBus.matrixIndex ?? 0)
         )
 
         // Replace any preset with the same name; otherwise append.
@@ -651,22 +937,28 @@ final class MixerState {
             }
         }
 
-        // Mutes / solos / gains / names / links — applied in that order so
-        // pushCellGain sees correct mute/solo flags when computing effective gain.
+        // Mutes / solos / levels / pans / names / links — applied before we
+        // push so `pushCellGain` sees correct flags when computing
+        // effective gain.
         if preset.mixerMutes.count == 18 { mixerMutes = preset.mixerMutes }
         if preset.mixerSolos.count == 18 { mixerSolos = preset.mixerSolos }
-        if preset.mixerGains.count == 18 { mixerGains = preset.mixerGains }
+        if let lvls = preset.mixerLevels, lvls.count == 18, lvls.allSatisfy({ $0.count == 3 }) {
+            mixerLevels = lvls
+        }
+        if let pns = preset.mixerPans, pns.count == 18, pns.allSatisfy({ $0.count == 3 }) {
+            mixerPans = pns
+        }
         if preset.mixerNames.count == 18 { mixerNames = preset.mixerNames }
         linkedPairs = Set(preset.linkedLefts)
 
         for ch in 0..<18 {
-            for bus in MixMatOut.allCases {
+            for bus in MixBus.matrixOutputs {
                 pushCellGain(channel: ch, bus: bus)
             }
         }
 
-        if let bus = MixMatOut(rawValue: preset.selectedBus) {
-            selectedBus = bus
+        if preset.selectedBus < UInt8(MixBus.matrixOutputs.count) {
+            selectedBus = MixBus.matrixOutputs[Int(preset.selectedBus)]
         }
 
         saveMatrix()
@@ -677,9 +969,68 @@ final class MixerState {
         savePresets()
     }
 
-    func userToggleMixerMute(channel: Int, bus: MixMatOut) {
-        guard (0..<18).contains(channel) else { return }
-        let busIdx = Int(bus.rawValue)
+    // MARK: - Reset
+
+    /// Apply a sensible "factory" default config:
+    /// - Outputs (Monitor L/R + Phones L/R) routed direct from DAW 1/DAW 2 so
+    ///   Mac audio is audible immediately.  S/PDIF outputs default Off.
+    /// - Matrix mixer cleared: all levels 0 dB, all pans centered, no mutes/
+    ///   solos/links.
+    /// - Pinned DAW return (ch 14 + 15) re-established with DAW 1/2 sources
+    ///   and hard L/R pans — ready to be brought up to mix DAW back through
+    ///   the matrix if the user wants to.
+    /// Hardware switches (impedance / hi-lo), clock, sample rate and master
+    /// output attenuation are left alone.
+    func userResetRoutingAndMatrix() {
+        let defaultRoutes: [(Route, MixBus)] = [
+            (.monitorLeft,  .daw1),
+            (.monitorRight, .daw2),
+            (.phonesLeft,   .daw1),
+            (.phonesRight,  .daw2),
+            (.spdifLeft,    .off),
+            (.spdifRight,   .off),
+        ]
+        for (route, source) in defaultRoutes {
+            routes[route] = source
+            if let dev = device {
+                writeAsync { try? dev.setRouteSource(route, from: source) }
+            }
+        }
+        saveRoutes()
+
+        // Reset matrix levels / pans / mutes / solos to defaults.
+        mixerLevels = Array(repeating: Array(repeating: 0, count: 3), count: 18)
+        mixerPans   = Array(repeating: Array(repeating: 0, count: 3), count: 18)
+        mixerMutes  = Array(repeating: Array(repeating: false, count: 6), count: 18)
+        mixerSolos  = Array(repeating: Array(repeating: false, count: 6), count: 18)
+        linkedPairs = []
+
+        // Re-assert the pinned DAW return.
+        ensurePinnedDawChannels()
+
+        // Push every cell to the device with the new state.
+        for ch in 0..<18 {
+            for bus in MixBus.matrixOutputs {
+                pushCellGain(channel: ch, bus: bus)
+            }
+        }
+
+        saveMatrix()
+        logEvent(.info, "Reset", "Default config applied (Monitor + Phones = DAW 1/2)")
+    }
+
+    /// Set the mute on a single cell directly (no toggle, no link propagation).
+    /// Used by callers (like `PinnedDawStrip`) that drive multiple channels
+    /// in concert and want exact control over each.
+    func userSetMixerMute(channel: Int, bus: MixBus, muted: Bool) {
+        guard (0..<18).contains(channel), let busIdx = bus.matrixIndex else { return }
+        mixerMutes[channel][busIdx] = muted
+        pushCellGain(channel: channel, bus: bus)
+        saveMatrix()
+    }
+
+    func userToggleMixerMute(channel: Int, bus: MixBus) {
+        guard (0..<18).contains(channel), let busIdx = bus.matrixIndex else { return }
         let newValue = !mixerMutes[channel][busIdx]
         mixerMutes[channel][busIdx] = newValue
         pushCellGain(channel: channel, bus: bus)
@@ -691,9 +1042,8 @@ final class MixerState {
     }
 
     /// Solo affects every cell in the same bus column, so we push all 18.
-    func userToggleMixerSolo(channel: Int, bus: MixMatOut) {
-        guard (0..<18).contains(channel) else { return }
-        let busIdx = Int(bus.rawValue)
+    func userToggleMixerSolo(channel: Int, bus: MixBus) {
+        guard (0..<18).contains(channel), let busIdx = bus.matrixIndex else { return }
         let newValue = !mixerSolos[channel][busIdx]
         mixerSolos[channel][busIdx] = newValue
         if let partner = linkedPartner(channel) {
@@ -705,10 +1055,9 @@ final class MixerState {
         saveMatrix()
     }
 
-    private func pushCellGain(channel: Int, bus: MixMatOut) {
-        guard let dev = device else { return }
-        let db = effectiveGain(channel: channel, busIdx: Int(bus.rawValue))
-        mixerGains[channel][Int(bus.rawValue)] = db
+    private func pushCellGain(channel: Int, bus: MixBus) {
+        guard let dev = device, let busIdx = bus.matrixIndex else { return }
+        let db = effectiveGain(channel: channel, busIdx: busIdx)
         writeAsync { try? dev.setMixerGain(channel: channel, bus: bus, db: db) }
     }
 

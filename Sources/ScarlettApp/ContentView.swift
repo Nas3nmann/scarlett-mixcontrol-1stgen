@@ -1,6 +1,23 @@
 import SwiftUI
 import ScarlettCore
 
+enum SampleRateOption: UInt32, CaseIterable, Identifiable {
+    case hz44100 = 44100
+    case hz48000 = 48000
+    case hz88200 = 88200
+    case hz96000 = 96000
+
+    var id: UInt32 { rawValue }
+    var displayName: String {
+        switch self {
+        case .hz44100: return "44.1 kHz"
+        case .hz48000: return "48 kHz"
+        case .hz88200: return "88.2 kHz"
+        case .hz96000: return "96 kHz"
+        }
+    }
+}
+
 enum AppTab: String, CaseIterable, Identifiable {
     case mixer, routing, presets, device
 
@@ -92,10 +109,10 @@ struct ContentView: View {
     private var sidebarFooter: some View {
         if sidebarCollapsed {
             VStack(spacing: 8) {
-                Image(systemName: state.connectionError == nil ? "checkmark.circle.fill" : "xmark.circle.fill")
+                Image(systemName: connectionIcon)
                     .font(.system(size: 13))
-                    .foregroundStyle(state.connectionError == nil ? .green : .red)
-                    .help(state.connectionError ?? "Connected")
+                    .foregroundStyle(connectionColor)
+                    .help(connectionHelp)
                 Image(systemName: state.syncLocked ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
                     .font(.system(size: 13))
                     .foregroundStyle(state.syncLocked ? .green : .orange)
@@ -106,12 +123,40 @@ struct ContentView: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 statusBadge
-                Text("Firmware \(state.firmware)").font(.caption2).foregroundStyle(Theme.textSecondary)
-                Text("Serial \(state.serial)").font(.caption2).foregroundStyle(Theme.textSecondary)
+                if state.isConnected {
+                    Text("Firmware \(state.firmware)").font(.caption2).foregroundStyle(Theme.textSecondary)
+                    Text("Serial \(state.serial)").font(.caption2).foregroundStyle(Theme.textSecondary)
+                }
+                Text("App v\(AppInfo.version)")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.textSecondary.opacity(0.7))
+                    .padding(.top, 4)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var connectionIcon: String {
+        switch state.connection {
+        case .connected:    return "checkmark.circle.fill"
+        case .waiting:      return "antenna.radiowaves.left.and.right.slash"
+        case .disconnected: return "xmark.circle.fill"
+        }
+    }
+    private var connectionColor: Color {
+        switch state.connection {
+        case .connected:    return .green
+        case .waiting:      return .orange
+        case .disconnected: return .red
+        }
+    }
+    private var connectionHelp: String {
+        switch state.connection {
+        case .connected:           return "Connected"
+        case .waiting:             return "Waiting for device"
+        case .disconnected(let r): return "Disconnected — \(r)"
         }
     }
 
@@ -136,6 +181,7 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, alignment: sidebarCollapsed ? .center : .leading)
             .background(selected ? Theme.panelRaised : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 4))
+            .contentShape(Rectangle())   // Make the whole pill clickable, not just the text.
             .padding(.horizontal, sidebarCollapsed ? 6 : 8)
         }
         .buttonStyle(.plain)
@@ -144,14 +190,23 @@ struct ContentView: View {
 
     private var statusBadge: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Label(state.connectionError == nil ? "Connected" : "Error",
-                  systemImage: state.connectionError == nil ? "checkmark.circle.fill" : "xmark.circle.fill")
+            Label(connectionStatusText, systemImage: connectionIcon)
                 .font(.caption2)
-                .foregroundStyle(state.connectionError == nil ? .green : .red)
-            Label(state.syncLocked ? "Clock locked" : "No clock lock",
-                  systemImage: state.syncLocked ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                .font(.caption2)
-                .foregroundStyle(state.syncLocked ? .green : .orange)
+                .foregroundStyle(connectionColor)
+            if state.isConnected {
+                Label(state.syncLocked ? "Clock locked" : "No clock lock",
+                      systemImage: state.syncLocked ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(state.syncLocked ? .green : .orange)
+            }
+        }
+    }
+
+    private var connectionStatusText: String {
+        switch state.connection {
+        case .connected:    return "Connected"
+        case .waiting:      return "Waiting for device"
+        case .disconnected: return "Disconnected"
         }
     }
 
@@ -174,15 +229,16 @@ struct MixerPaneView: View {
     @Bindable var state: MixerState
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                MatrixMixerView(state: state)
-                masterSection
+        ConnectionOverlay(state: state) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    MatrixMixerView(state: state)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(24)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.background)
         }
-        .background(Theme.background)
     }
 
     private var masterSection: some View {
@@ -277,6 +333,7 @@ struct MixerPaneView: View {
             Button("Save to hardware") { state.saveToFlash() }
                 .controlSize(.regular)
                 .help("Persist current settings to device flash so they survive a power cycle.")
+                .disabled(!state.isConnected)
         }
         .frame(width: 200, alignment: .leading)
     }
@@ -288,6 +345,12 @@ struct RoutingView: View {
     @Bindable var state: MixerState
 
     var body: some View {
+        ConnectionOverlay(state: state) {
+            routingContent
+        }
+    }
+
+    private var routingContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .firstTextBaseline) {
@@ -314,8 +377,11 @@ struct RoutingView: View {
         }
         .background(Theme.background)
     }
+}
 
-    private func stereoRouteRow(_ title: String, _ subtitle: String, _ left: Route, _ right: Route) -> some View {
+extension RoutingView {
+
+    fileprivate func stereoRouteRow(_ title: String, _ subtitle: String, _ left: Route, _ right: Route) -> some View {
         HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.subheadline.bold()).foregroundStyle(Theme.textPrimary)
@@ -332,18 +398,18 @@ struct RoutingView: View {
         .clipShape(RoundedRectangle(cornerRadius: 5))
     }
 
-    private func routePicker(label: String, route: Route) -> some View {
+    fileprivate func routePicker(label: String, route: Route) -> some View {
         HStack(spacing: 6) {
             Text(label).font(.caption.monospacedDigit()).foregroundStyle(Theme.textSecondary).frame(width: 12)
-            Picker("", selection: Binding(
-                get: { state.routes[route] ?? .off },
-                set: { state.userSetRoute(route, to: $0) }
-            )) {
-                ForEach(MixBus.availableOn8i6) { Text($0.displayName).tag($0) }
-            }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .frame(width: 150)
+            ThemedMenuPicker(
+                options: MixBus.availableOn8i6,
+                displayName: { $0.displayName },
+                selection: Binding(
+                    get: { state.routes[route] ?? .off },
+                    set: { state.userSetRoute(route, to: $0) }
+                ),
+                width: 150
+            )
         }
     }
 }
@@ -373,34 +439,42 @@ struct DeviceView: View {
                     HStack(alignment: .top, spacing: 28) {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Clock source").font(.subheadline).foregroundStyle(Theme.textPrimary)
-                            Picker("", selection: Binding(
-                                get: { state.clock },
-                                set: { state.userSetClock($0) }
-                            )) {
-                                Text(ClockSource.internalClock.displayName).tag(ClockSource.internalClock)
-                                Text(ClockSource.spdif.displayName).tag(ClockSource.spdif)
-                            }
-                            .pickerStyle(.menu).labelsHidden().frame(width: 160)
+                            ThemedMenuPicker(
+                                options: [ClockSource.internalClock, .spdif],
+                                displayName: { $0.displayName },
+                                selection: Binding(
+                                    get: { state.clock },
+                                    set: { state.userSetClock($0) }
+                                ),
+                                width: 160
+                            )
+                            .disabled(!state.isConnected)
                         }
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Sample rate").font(.subheadline).foregroundStyle(Theme.textPrimary)
-                            Picker("", selection: Binding(
-                                get: { state.sampleRate },
-                                set: { state.userSetSampleRate($0) }
-                            )) {
-                                Text("44.1 kHz").tag(UInt32(44100))
-                                Text("48 kHz").tag(UInt32(48000))
-                                Text("88.2 kHz").tag(UInt32(88200))
-                                Text("96 kHz").tag(UInt32(96000))
-                            }
-                            .pickerStyle(.menu).labelsHidden().frame(width: 160)
+                            ThemedMenuPicker(
+                                options: SampleRateOption.allCases,
+                                displayName: { $0.displayName },
+                                selection: Binding(
+                                    get: { SampleRateOption(rawValue: state.sampleRate) ?? .hz48000 },
+                                    set: { state.userSetSampleRate($0.rawValue) }
+                                ),
+                                width: 160
+                            )
+                            .disabled(!state.isConnected)
                         }
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Sync status").font(.subheadline).foregroundStyle(Theme.textPrimary)
                             HStack(spacing: 6) {
-                                Image(systemName: state.syncLocked ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                                    .foregroundStyle(state.syncLocked ? .green : .orange)
-                                Text(state.syncLocked ? "Locked" : "No lock")
+                                Image(systemName: state.isConnected
+                                      ? (state.syncLocked ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                                      : "questionmark.circle")
+                                    .foregroundStyle(state.isConnected
+                                        ? (state.syncLocked ? .green : .orange)
+                                        : Theme.textSecondary)
+                                Text(state.isConnected
+                                     ? (state.syncLocked ? "Locked" : "No lock")
+                                     : "Unknown")
                                     .foregroundStyle(Theme.textSecondary)
                             }
                             .padding(.top, 2)
@@ -412,13 +486,21 @@ struct DeviceView: View {
                         .padding(.top, 6)
                 }
 
-                Panel(title: "Persistence") {
-                    HStack {
+                Panel(title: "Persistence & reset") {
+                    HStack(spacing: 10) {
                         Button("Save to hardware") { state.saveToFlash() }
                             .help("Writes current state to the device's flash so it survives a power cycle. Flash has finite write cycles; don't call this every change.")
+                            .disabled(!state.isConnected)
+                        Button("Reset routing & matrix", role: .destructive) {
+                            state.userResetRoutingAndMatrix()
+                        }
+                        .help("Clear every output route to Off and reset all matrix channels (levels 0 / pans centered / unmuted / unsoloed / unlinked). The pinned DAW return is re-applied automatically.  Hardware switches, clock, sample rate and output volumes are untouched.")
+                        .disabled(!state.isConnected)
                         Spacer()
                     }
                 }
+
+                EventLogPanel(state: state)
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -454,6 +536,180 @@ struct DeviceView: View {
                   valueColor: state.connectionError == nil ? Theme.textSecondary : .red),
         ]
     }
+}
+
+/// Wraps a pane's content. When `state.isConnected` is false, the content is
+/// blurred + made non-interactive, and a centered card describes the state
+/// with a Retry button.  Used by Mixer and Routing panes — Device and Presets
+/// stay reachable so the user can inspect the event log / saved presets even
+/// while the hardware is gone.
+struct ConnectionOverlay<Content: View>: View {
+    @Bindable var state: MixerState
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        ZStack {
+            content()
+                .blur(radius: state.isConnected ? 0 : 6)
+                .allowsHitTesting(state.isConnected)
+                .animation(.easeInOut(duration: 0.18), value: state.isConnected)
+
+            if !state.isConnected {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                ConnectionOverlayCard(state: state)
+                    .frame(maxWidth: 460)
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: state.isConnected)
+    }
+}
+
+struct ConnectionOverlayCard: View {
+    @Bindable var state: MixerState
+
+    var body: some View {
+        let (color, icon, title, subtitle) = content
+        VStack(spacing: 16) {
+            Image(systemName: icon)
+                .font(.system(size: 44, weight: .regular))
+                .foregroundStyle(color)
+            Text(title)
+                .font(.title3.bold())
+                .foregroundStyle(Theme.textPrimary)
+            Text(subtitle)
+                .font(.callout)
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 380)
+            HStack(spacing: 10) {
+                Button {
+                    state.attemptConnect()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Retry now")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(Theme.muteActive)
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.top, 4)
+        }
+        .padding(.horizontal, 32)
+        .padding(.vertical, 28)
+        .background(Theme.panel)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(color.opacity(0.45), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .shadow(color: .black.opacity(0.45), radius: 24, y: 4)
+    }
+
+    private var content: (Color, String, String, String) {
+        switch state.connection {
+        case .connected:
+            return (.green, "checkmark.circle.fill", "Connected", "")
+        case .waiting:
+            return (
+                .orange,
+                "antenna.radiowaves.left.and.right.slash",
+                "Waiting for Scarlett 8i6",
+                "Plug the device in via USB. The app will reconnect automatically."
+            )
+        case .disconnected(let reason):
+            return (
+                .red,
+                "xmark.octagon.fill",
+                "Device disconnected",
+                "Reason: \(reason)\nThe app will keep trying to reconnect."
+            )
+        }
+    }
+}
+
+/// Event log panel for the Device tab.  Lists recent USB, sync and
+/// Core Audio events from `state.deviceEvents`, newest first.
+struct EventLogPanel: View {
+    @Bindable var state: MixerState
+
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+
+    var body: some View {
+        Panel(title: "Event log") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("USB transfers, sync changes, Core Audio device presence. Most recent first.")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    Button("Clear") { state.clearDeviceEvents() }
+                        .disabled(state.deviceEvents.isEmpty)
+                }
+                Divider().background(Theme.divider)
+                if state.deviceEvents.isEmpty {
+                    Text("No events yet.")
+                        .font(.caption).foregroundStyle(Theme.textSecondary)
+                        .padding(.vertical, 8)
+                } else {
+                    ScrollView {
+                        VStack(spacing: 3) {
+                            ForEach(state.deviceEvents) { event in
+                                EventRow(event: event)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 220)
+                }
+            }
+        }
+    }
+}
+
+struct EventRow: View {
+    let event: DeviceEvent
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: event.severity.systemImage)
+                .font(.system(size: 11))
+                .foregroundStyle(event.severity.color)
+                .frame(width: 16)
+            Text(EventLogPanel.formatTime(event.timestamp))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 70, alignment: .leading)
+            Text(event.category)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 90, alignment: .leading)
+            Text(event.message)
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 2)
+        .padding(.horizontal, 4)
+    }
+}
+
+extension EventLogPanel {
+    static func formatTime(_ d: Date) -> String { timeFormatter.string(from: d) }
 }
 
 /// Simple label-value table for the Device pane.

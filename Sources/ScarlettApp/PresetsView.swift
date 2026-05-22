@@ -14,6 +14,15 @@ struct PresetsView: View {
     }()
 
     var body: some View {
+        // Preset save/load both touch the device (push routes + matrix), so
+        // when there's no device the page is gated the same way Mixer and
+        // Routing are.
+        ConnectionOverlay(state: state) {
+            presetsContent
+        }
+    }
+
+    private var presetsContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header

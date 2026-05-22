@@ -13,26 +13,31 @@ struct ChannelStrip: View {
 
     var body: some View {
         let bus = state.selectedBus
-        let busIdx = Int(bus.rawValue)
+        let busIdx = bus.matrixIndex ?? 0
         let source = state.mixerSources[channel]
         let isMuted = state.mixerMutes[channel][busIdx]
         let isSoloed = state.mixerSolos[channel][busIdx]
 
-        VStack(spacing: 6) {
+        VStack(spacing: StripLayout.vSpacing) {
             header(source: source)
             inputSwitch(source: source)
+                .frame(height: StripLayout.switchRowHeight)
             panSlider
+                .frame(height: StripLayout.panRowHeight)
             fader
+                .frame(height: StripLayout.faderHeight)
             peakReadout
+                .frame(height: StripLayout.peakReadoutHeight)
             mutesolo(isMuted: isMuted, isSoloed: isSoloed)
+                .frame(height: StripLayout.controlsHeight)
         }
-        .frame(width: 100)
+        .frame(width: StripLayout.width)
         .padding(.vertical, 10)
         .padding(.horizontal, 6)
         .background(Theme.panel)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay(
-            // Subtle bottom border to make linked pairs visually obvious.
+            // Subtle border to make linked pairs visually obvious.
             RoundedRectangle(cornerRadius: 6)
                 .strokeBorder(state.isLinked(channel) ? Theme.muteActive.opacity(0.45) : .clear, lineWidth: 1)
         )
@@ -80,16 +85,14 @@ struct ChannelStrip: View {
     private func header(source: SignalSource) -> some View {
         VStack(spacing: 3) {
             nameField
-            Picker("", selection: Binding(
-                get: { state.mixerSources[channel] },
-                set: { state.userSetMixerSource(channel: channel, source: $0) }
-            )) {
-                ForEach(SignalSource.availableOn8i6) { Text($0.displayName).tag($0) }
-            }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .controlSize(.mini)
-            .tint(Theme.textSecondary)
+            ThemedMenuPicker(
+                options: SignalSource.availableOn8i6,
+                displayName: { $0.displayName },
+                selection: Binding(
+                    get: { state.mixerSources[channel] },
+                    set: { state.userSetMixerSource(channel: channel, source: $0) }
+                )
+            )
 
             Rectangle()
                 .fill(source.accentColor)
@@ -143,13 +146,10 @@ struct ChannelStrip: View {
 
     private var fader: some View {
         let bus = state.selectedBus
-        let busIdx = Int(bus.rawValue)
+        let busIdx = bus.matrixIndex ?? 0
         let pair = MixerState.pairIndex(of: bus)
         let level = state.mixerLevels[channel][pair]
-        let meterDb = liveLevel(from: state.peaks)
-        let peakDb  = liveLevel(from: state.peaksHeld)
-
-        let maxDb = liveLevel(from: state.peaksMax)
+        let source = state.mixerSources[channel]
 
         return HStack(alignment: .center, spacing: 4) {
             VerticalFader(db: Binding(
@@ -163,7 +163,10 @@ struct ChannelStrip: View {
                 }
             }
 
-            VerticalMeter(db: meterDb, peakDb: peakDb, maxPeakDb: maxDb)
+            // Reads peaks/peaksHeld/peaksMax internally → isolated from the
+            // outer strip body so 20 Hz meter updates only re-render this
+            // small view, not the whole strip (faders, pickers, buttons, …).
+            StripMeter(state: state, source: source)
 
             DbScale()
         }
@@ -205,56 +208,16 @@ struct ChannelStrip: View {
         return pan < 0 ? "L\(pct)" : "R\(pct)"
     }
 
-    /// Maps the strip's current source selection to the matching slot in a
-    /// `PeakReading` so we can render both live and peak-hold levels.
-    private func liveLevel(from peaks: PeakReading) -> Double {
-        switch state.mixerSources[channel] {
-        case .analog1: return peaks.inputs[0]
-        case .analog2: return peaks.inputs[1]
-        case .analog3: return peaks.inputs[2]
-        case .analog4: return peaks.inputs[3]
-        case .spdif1:  return peaks.inputs[8]
-        case .spdif2:  return peaks.inputs[9]
-        case .daw1:    return peaks.daw[0]
-        case .daw2:    return peaks.daw[1]
-        case .daw3:    return peaks.daw[2]
-        case .daw4:    return peaks.daw[3]
-        case .daw5:    return peaks.daw[4]
-        case .daw6:    return peaks.daw[5]
-        default:       return -.infinity
-        }
-    }
-
     private var peakReadout: some View {
-        let peak = liveLevel(from: state.peaksHeld)
-        let max  = liveLevel(from: state.peaksMax)
-        return VStack(spacing: 1) {
-            Text(formatPeak("Pk", peak))
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(Theme.textSecondary)
-            Button {
-                state.clearMaxPeak(forSource: state.mixerSources[channel])
-            } label: {
-                Text(formatPeak("Mx", max))
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(Theme.meterHigh)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Click to reset this channel's max peak")
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func formatPeak(_ label: String, _ db: Double) -> String {
-        if !db.isFinite || db <= -60 { return "\(label) −∞" }
-        return String(format: "%@ %5.1f", label, db)
+        let source = state.mixerSources[channel]
+        return StripPeakReadout(state: state, source: source)
     }
 
     // MARK: - Mute / Solo
 
     private func mutesolo(isMuted: Bool, isSoloed: Bool) -> some View {
         HStack(spacing: 3) {
+            Spacer(minLength: 0)
             StripButton(letter: "M", active: isMuted, activeColor: Theme.muteActive) {
                 state.userToggleMixerMute(channel: channel, bus: state.selectedBus)
             }
@@ -264,6 +227,7 @@ struct ChannelStrip: View {
             LinkButton(active: state.isLinked(channel)) {
                 state.userToggleLink(channel: channel)
             }
+            Spacer(minLength: 0)
         }
     }
 
@@ -303,6 +267,96 @@ struct HiLoSwitch: View {
         .labelsHidden()
         .controlSize(.mini)
         .frame(height: 22)
+    }
+}
+
+/// Live + peak-hold + max meter for one strip.  Isolated into its own struct
+/// so that 20 Hz `peaks*` updates only re-render this view, not the parent
+/// strip's fader / pickers / buttons / name field.
+struct StripMeter: View {
+    @Bindable var state: MixerState
+    let source: SignalSource
+    var height: CGFloat = 220
+
+    var body: some View {
+        let live = level(from: state.peaks)
+        let held = level(from: state.peaksHeld)
+        let max_ = level(from: state.peaksMax)
+        VerticalMeter(db: live, peakDb: held, maxPeakDb: max_, height: height)
+    }
+
+    private func level(from peaks: PeakReading) -> Double {
+        Self.level(from: peaks, source: source)
+    }
+
+    static func level(from peaks: PeakReading, source: SignalSource) -> Double {
+        // Defer to PeakReading.level(for: MixBus) — every SignalSource case has
+        // the same raw byte value as the corresponding MixBus case, so a
+        // raw-value cross-conversion is exact.
+        peaks.level(for: MixBus(rawValue: source.rawValue) ?? .off)
+    }
+}
+
+extension PeakReading {
+    /// Look up the meter value for whichever device-side meter slot
+    /// corresponds to a given signal source.  Returns -∞ for `.off` or
+    /// for sources the device doesn't surface a meter for.
+    func level(for source: MixBus) -> Double {
+        switch source {
+        case .off, .daw7, .daw8, .daw9, .daw10, .daw11, .daw12:
+            return -.infinity
+        case .daw1:    return daw[0]
+        case .daw2:    return daw[1]
+        case .daw3:    return daw[2]
+        case .daw4:    return daw[3]
+        case .daw5:    return daw[4]
+        case .daw6:    return daw[5]
+        case .analog1: return inputs[0]
+        case .analog2: return inputs[1]
+        case .analog3: return inputs[2]
+        case .analog4: return inputs[3]
+        case .spdif1:  return inputs[8]
+        case .spdif2:  return inputs[9]
+        case .m1:      return mixer[0]
+        case .m2:      return mixer[1]
+        case .m3:      return mixer[2]
+        case .m4:      return mixer[3]
+        case .m5:      return mixer[4]
+        case .m6:      return mixer[5]
+        }
+    }
+}
+
+/// Numeric "Pk" + clickable "Mx" peak readout. Isolated for the same reason
+/// as `StripMeter` — only this view re-renders when the peak values change.
+struct StripPeakReadout: View {
+    @Bindable var state: MixerState
+    let source: SignalSource
+
+    var body: some View {
+        let peak = StripMeter.level(from: state.peaksHeld, source: source)
+        let max_ = StripMeter.level(from: state.peaksMax, source: source)
+        VStack(spacing: 1) {
+            Text(formatPeak("Pk", peak))
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(Theme.textSecondary)
+            Button {
+                state.clearMaxPeak(forSource: source)
+            } label: {
+                Text(formatPeak("Mx", max_))
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(Theme.meterHigh)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Click to reset this channel's max peak")
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func formatPeak(_ label: String, _ db: Double) -> String {
+        if !db.isFinite || db <= -60 { return "\(label) −∞" }
+        return String(format: "%@ %5.1f", label, db)
     }
 }
 

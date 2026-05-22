@@ -23,14 +23,16 @@ struct MatrixMixerView: View {
         HStack(alignment: .firstTextBaseline) {
             Text("Mixer").font(.title3).bold().foregroundStyle(Theme.textPrimary)
             Spacer()
-            Text("Each row = one matrix input. Pick a bus tab to set its gain to that bus.")
+            Text("Pick a bus tab to set its per-channel gains. Use the strips' source pickers to wire signals in.")
                 .font(.caption).foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: 320)
         }
     }
 
     private var busTabs: some View {
         HStack(spacing: 4) {
-            ForEach(MixMatOut.allCases) { bus in
+            ForEach(MixBus.matrixOutputs) { bus in
                 let selected = state.selectedBus == bus
                 Button {
                     state.selectedBus = bus
@@ -45,37 +47,68 @@ struct MatrixMixerView: View {
                 .buttonStyle(.plain)
             }
             Spacer()
-            Button {
+            actionButton(icon: "arrow.counterclockwise", label: "Clear peaks") {
                 state.clearMaxPeaks()
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "arrow.counterclockwise")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text("Clear peaks")
-                        .font(.system(size: 11, weight: .semibold))
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Theme.panelRaised)
-                .foregroundStyle(Theme.textSecondary)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
             }
-            .buttonStyle(.plain)
             .help("Reset the red max-peak tick on every strip.")
-            Text("Showing gains for: \(state.selectedBus.displayName)")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(Theme.textSecondary)
+
+            actionButton(
+                icon: state.masterMuted ? "speaker.slash.fill" : "speaker.wave.2",
+                label: state.masterMuted ? "Master muted" : "Mute all",
+                active: state.masterMuted,
+                activeColor: Theme.muteActive
+            ) {
+                state.userSetMasterMute(!state.masterMuted)
+            }
+            .help("Mute every output bus on the device.")
+
+            actionButton(icon: "arrow.uturn.backward.circle", label: "Default config") {
+                state.userResetRoutingAndMatrix()
+            }
+            .disabled(!state.isConnected)
+            .help("Reset routing and matrix to defaults: Monitor + Phones routed direct from DAW 1/2 (Mac audio audible), matrix cleared, pinned DAW return re-established.")
+
+            actionButton(icon: "internaldrive", label: "Save to hardware") {
+                state.saveToFlash()
+            }
+            .disabled(!state.isConnected)
+            .help("Persist current settings to device flash so they survive a power cycle.")
         }
     }
 
-    private var strips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(visibleChannels, id: \.self) { ch in
-                    ChannelStrip(channel: ch, state: state)
-                }
+    private func actionButton(
+        icon: String, label: String,
+        active: Bool = false, activeColor: Color = Theme.muteActive,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 11, weight: .semibold))
             }
-            .padding(.vertical, 4)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(active ? activeColor : Theme.panelRaised)
+            .foregroundStyle(active ? .white : Theme.textSecondary)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var strips: some View {
+        HStack(alignment: .top, spacing: 6) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(visibleChannels, id: \.self) { ch in
+                        ChannelStrip(channel: ch, state: state)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            PinnedDawStrip(state: state)
+            PinnedMasterStrip(state: state)
         }
     }
 }

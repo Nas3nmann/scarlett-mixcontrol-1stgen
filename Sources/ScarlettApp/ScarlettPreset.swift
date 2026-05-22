@@ -14,7 +14,9 @@ public struct ScarlettPreset: Codable, Identifiable, Hashable {
 
     /// Matrix mixer state (parallel to MixerState fields).
     public var mixerSources: [UInt8]    // SignalSource raw, 18 entries
-    public var mixerGains:   [[Double]] // 18 × 6
+    public var mixerLevels:  [[Double]]?// 18 × 3 (channel × bus-pair)
+    public var mixerPans:    [[Double]]?// 18 × 3
+    public var mixerGains:   [[Double]]?// legacy 18 × 6 — decode-only
     public var mixerMutes:   [[Bool]]   // 18 × 6
     public var mixerSolos:   [[Bool]]   // 18 × 6
     public var mixerNames:   [String]   // 18
@@ -22,6 +24,6 @@ public struct ScarlettPreset: Codable, Identifiable, Hashable {
     /// Left-channel indices of linked stereo pairs.
     public var linkedLefts: [Int]
 
-    /// Bus that was active when the snapshot was taken.
+    /// Index (0..5) of the bus that was active when the snapshot was taken.
     public var selectedBus: UInt8
 }

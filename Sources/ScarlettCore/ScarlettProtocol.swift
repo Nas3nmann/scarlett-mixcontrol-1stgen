@@ -29,20 +29,23 @@ public enum ClockSource: UInt8, CaseIterable, Identifiable {
 
 /// Signal sources that can be connected to matrix-mixer inputs.
 ///
-/// IMPORTANT: byte values here are for the **1st-gen Scarlett 8i6**, which
-/// differ from x42's reverse-engineered 18i6 mapping. Per the Linux kernel
-/// driver (`sound/usb/mixer_scarlett.c` s8i6_info, offsets={0,12,16,18,18}):
+/// Byte values reverse-engineered from the original MixControl 1.10.6 binary
+/// (`_USB14Tracker_IpSigTab`).  Both x42's 18i6 mapping AND Linux's
+/// `s8i6_info`-derived mapping were wrong for S/PDIF — Linux had it right
+/// for Analog though.
+///
 ///   0x00..0x05 → DAW 1..6
-///   0x06..0x0b → PCM 7..12 (firmware exposes 12 PCM slots; only 6 are wired)
-///   0x0c..0x0f → Analog 1..4 (only 4 analog ins on the 8i6, not 8)
-///   0x10..0x11 → S/PDIF 1..2
+///   0x06..0x0b → DAW 7..12 (exposed but not wired to USB; silent on a real
+///                            8i6 unless paired with a different host)
+///   0x0c..0x0f → Analog 1..4
+///   0x12..0x13 → S/PDIF 1..2   (NOT 0x10..0x11 — Linux is wrong)
 ///   0xff       → Off
 public enum SignalSource: UInt8, CaseIterable, Identifiable, Hashable {
     case off = 0xff
     case daw1 = 0x00, daw2 = 0x01, daw3 = 0x02, daw4 = 0x03, daw5 = 0x04, daw6 = 0x05
-    case pcm7 = 0x06, pcm8 = 0x07, pcm9 = 0x08, pcm10 = 0x09, pcm11 = 0x0a, pcm12 = 0x0b
+    case daw7 = 0x06, daw8 = 0x07, daw9 = 0x08, daw10 = 0x09, daw11 = 0x0a, daw12 = 0x0b
     case analog1 = 0x0c, analog2 = 0x0d, analog3 = 0x0e, analog4 = 0x0f
-    case spdif1 = 0x10, spdif2 = 0x11
+    case spdif1 = 0x12, spdif2 = 0x13
 
     public var id: UInt8 { rawValue }
     public var displayName: String {
@@ -54,12 +57,12 @@ public enum SignalSource: UInt8, CaseIterable, Identifiable, Hashable {
         case .daw4:    return "DAW 4"
         case .daw5:    return "DAW 5"
         case .daw6:    return "DAW 6"
-        case .pcm7:    return "PCM 7"
-        case .pcm8:    return "PCM 8"
-        case .pcm9:    return "PCM 9"
-        case .pcm10:   return "PCM 10"
-        case .pcm11:   return "PCM 11"
-        case .pcm12:   return "PCM 12"
+        case .daw7:    return "DAW 7"
+        case .daw8:    return "DAW 8"
+        case .daw9:    return "DAW 9"
+        case .daw10:   return "DAW 10"
+        case .daw11:   return "DAW 11"
+        case .daw12:   return "DAW 12"
         case .analog1: return "Analog 1"
         case .analog2: return "Analog 2"
         case .analog3: return "Analog 3"
@@ -69,8 +72,8 @@ public enum SignalSource: UInt8, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    /// Useful sources on a real 8i6 (drops the PCM 7-12 slots that aren't
-    /// wired to USB streams, since picking one of those produces silence).
+    /// Useful sources on a real 8i6 — drops the DAW 7-12 slots that aren't
+    /// wired to USB output streams (selecting one produces silence).
     public static let availableOn8i6: [SignalSource] = [
         .off,
         .daw1, .daw2, .daw3, .daw4, .daw5, .daw6,
@@ -80,15 +83,31 @@ public enum SignalSource: UInt8, CaseIterable, Identifiable, Hashable {
 }
 
 /// Sources for the router — superset of SignalSource plus the 6 matrix-mixer outputs.
-/// Same byte mapping as `SignalSource` (Linux's `s8i6_info` for both opt_master
-/// and opt_matrix uses the same offsets table). Mix M1..M6 sit at 0x18..0x1d.
+///
+/// Byte values reverse-engineered from the original MixControl 1.10.6 binary
+/// (`_USB14Tracker_IpSigTab`).  Same table as SignalSource: anywhere a
+/// source can be selected (matrix-channel input via `setMixerSource`, or
+/// physical-output input via `setRouteSource`), it uses these bytes.
+///
+/// 8i6 mapping:
+///   0x00..0x0b → DAW 1..12 (only 1..6 are wired to USB)
+///   0x0c..0x0f → Analog 1..4
+///   0x12..0x13 → S/PDIF 1..2
+///   0x14..0x19 → Mix M1..M6 (MixControl calls these "FromMix1..6" — the
+///                              matrix's own outputs, usable as a feed to a
+///                              physical output via the router)
+///   0xff       → Off
+///
+/// Both x42 AND Linux were wrong about Mix-bus AND SPDIF bytes for the 8i6.
+/// Linux's `s8i6_info` is the `/* untested... */` table — empirically wrong.
+/// x42 reverse-engineered the 18i6, where the byte values differ.
 public enum MixBus: UInt8, CaseIterable, Identifiable, Hashable {
     case off = 0xff
     case daw1 = 0x00, daw2 = 0x01, daw3 = 0x02, daw4 = 0x03, daw5 = 0x04, daw6 = 0x05
-    case pcm7 = 0x06, pcm8 = 0x07, pcm9 = 0x08, pcm10 = 0x09, pcm11 = 0x0a, pcm12 = 0x0b
+    case daw7 = 0x06, daw8 = 0x07, daw9 = 0x08, daw10 = 0x09, daw11 = 0x0a, daw12 = 0x0b
     case analog1 = 0x0c, analog2 = 0x0d, analog3 = 0x0e, analog4 = 0x0f
-    case spdif1 = 0x10, spdif2 = 0x11
-    case m1 = 0x18, m2 = 0x19, m3 = 0x1a, m4 = 0x1b, m5 = 0x1c, m6 = 0x1d
+    case spdif1 = 0x12, spdif2 = 0x13
+    case m1 = 0x14, m2 = 0x15, m3 = 0x16, m4 = 0x17, m5 = 0x18, m6 = 0x19
 
     public var id: UInt8 { rawValue }
     public var displayName: String {
@@ -100,12 +119,12 @@ public enum MixBus: UInt8, CaseIterable, Identifiable, Hashable {
         case .daw4:    return "DAW 4"
         case .daw5:    return "DAW 5"
         case .daw6:    return "DAW 6"
-        case .pcm7:    return "PCM 7"
-        case .pcm8:    return "PCM 8"
-        case .pcm9:    return "PCM 9"
-        case .pcm10:   return "PCM 10"
-        case .pcm11:   return "PCM 11"
-        case .pcm12:   return "PCM 12"
+        case .daw7:    return "DAW 7"
+        case .daw8:    return "DAW 8"
+        case .daw9:    return "DAW 9"
+        case .daw10:   return "DAW 10"
+        case .daw11:   return "DAW 11"
+        case .daw12:   return "DAW 12"
         case .analog1: return "Analog 1"
         case .analog2: return "Analog 2"
         case .analog3: return "Analog 3"
@@ -129,6 +148,33 @@ public enum MixBus: UInt8, CaseIterable, Identifiable, Hashable {
         .spdif1, .spdif2,
         .m1, .m2, .m3, .m4, .m5, .m6,
     ]
+
+    /// Just the 6 matrix-output buses (M1..M6), in order.
+    public static let matrixOutputs: [MixBus] = [.m1, .m2, .m3, .m4, .m5, .m6]
+
+    /// Index into the matrix (0..5) for the 6 mix-bus outputs. nil for any
+    /// other MixBus case (it's only meaningful for `.m1..m6`).  Used by
+    /// `setMixerGain` to compute the cell address.
+    public var matrixIndex: Int? {
+        switch self {
+        case .m1: return 0; case .m2: return 1; case .m3: return 2
+        case .m4: return 3; case .m5: return 4; case .m6: return 5
+        default:  return nil
+        }
+    }
+
+    /// Which stereo pair this mix bus belongs to: 0 = M1+M2, 1 = M3+M4,
+    /// 2 = M5+M6. nil for non-matrix buses.
+    public var stereoPairIndex: Int? {
+        guard let idx = matrixIndex else { return nil }
+        return idx / 2
+    }
+
+    /// True for the left side of a stereo pair (M1, M3, M5).
+    public var isLeftOfPair: Bool {
+        guard let idx = matrixIndex else { return false }
+        return idx % 2 == 0
+    }
 }
 
 /// Physical output route index (0..5).
@@ -155,13 +201,6 @@ public enum SignalOut: UInt16 {
     case master = 0
     case monitorLeft = 1, monitorRight = 2
     case phonesLeft = 3,  phonesRight = 4
-}
-
-/// Matrix mixer output bus index (M1..M6).
-public enum MixMatOut: UInt8, CaseIterable, Identifiable {
-    case m1 = 0, m2 = 1, m3 = 2, m4 = 3, m5 = 4, m6 = 5
-    public var id: UInt8 { rawValue }
-    public var displayName: String { "M\(rawValue + 1)" }
 }
 
 // MARK: - Gain encoding (matches x42 byte-for-byte)
@@ -293,9 +332,11 @@ extension ScarlettDevice {
     }
 
     /// Set matrix-mixer per-cell gain (channel × bus). -128 .. +6 dB.
-    public func setMixerGain(channel: Int, bus: MixMatOut, db: Double) throws {
+    /// `bus` must be one of `.m1..m6` (anything else is a no-op).
+    public func setMixerGain(channel: Int, bus: MixBus, db: Double) throws {
         guard (0...17).contains(channel) else { throw ScarlettError.invalidArgument("mixer channel must be 0..17") }
-        let mtx = UInt16(channel << 3) + UInt16(bus.rawValue & 0x07)
+        guard let idx = bus.matrixIndex else { return }
+        let mtx = UInt16(channel << 3) + UInt16(idx & 0x07)
         try controlOut(
             cmd: 0x01,
             value: 0x0100 + mtx,
@@ -370,17 +411,20 @@ extension ScarlettDevice {
         return SignalSource(rawValue: r[0]) ?? .off
     }
 
-    /// Read clock-sync status: true = device is locked to its current clock source,
-    /// false = no lock (audio will glitch/silence). Per Linux driver comments at
-    /// `wIndex=0x3c00, wValue=0x0002, len=1` returning 1 byte (1 = locked).
+    /// Read clock-sync status: true = device is locked to its current clock
+    /// source, false = no lock (audio will glitch/silence).  Per x42's docs,
+    /// reads from `wIndex=0x3c00` use `bRequest = UAC2_CS_MEM (0x03)` — the
+    /// same path peak meters take — *not* the regular CS_CUR (0x01) used for
+    /// other controls.
     public func getSyncLocked() throws -> Bool {
-        let r = try controlIn(cmd: 0x01, value: 0x0002, index: 0x3c00, length: 1)
+        let r = try controlIn(cmd: 0x03, value: 0x0002, index: 0x3c00, length: 1)
         return r.first == 0x01
     }
 
-    public func getMixerGain(channel: Int, bus: MixMatOut) throws -> Double {
+    public func getMixerGain(channel: Int, bus: MixBus) throws -> Double {
         guard (0...17).contains(channel) else { throw ScarlettError.invalidArgument("mixer channel must be 0..17") }
-        let mtx = UInt16(channel << 3) + UInt16(bus.rawValue & 0x07)
+        guard let idx = bus.matrixIndex else { return -.infinity }
+        let mtx = UInt16(channel << 3) + UInt16(idx & 0x07)
         let r = try controlIn(cmd: 0x01, value: 0x0100 + mtx, index: 0x3c00, length: 2)
         // gainBytes packs the dB value as a signed Int8 in the high byte.
         return Double(Int8(bitPattern: r[1]))

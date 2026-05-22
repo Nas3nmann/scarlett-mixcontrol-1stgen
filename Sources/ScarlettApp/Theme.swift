@@ -1,6 +1,27 @@
 import SwiftUI
 import ScarlettCore
 
+enum AppInfo {
+    /// Bump on each user-visible release.
+    static let version = "0.1"
+}
+
+/// Pixel-exact section heights shared by every strip in the mixer (channel,
+/// DAW, output). Keeping them in one place makes alignment trivial — every
+/// strip uses the same `.frame(height:)` on each section so their bottoms
+/// line up regardless of what content the section actually shows.
+enum StripLayout {
+    static let width:               CGFloat = 100
+    static let headerHeight:        CGFloat = 50
+    static let switchRowHeight:     CGFloat = 22
+    static let panRowHeight:        CGFloat = 30
+    static let faderHeight:         CGFloat = 220
+    static let peakReadoutHeight:   CGFloat = 28
+    /// Bottom controls = single 22-pt row, contents centered.
+    static let controlsHeight:      CGFloat = 22
+    static let vSpacing:            CGFloat = 6
+}
+
 // Centralised palette to keep the Control-2-style dark look consistent.
 
 enum Theme {
@@ -54,7 +75,7 @@ extension SignalSource {
     var accentColor: Color {
         switch self {
         case .daw1, .daw2, .daw3, .daw4, .daw5, .daw6,
-             .pcm7, .pcm8, .pcm9, .pcm10, .pcm11, .pcm12:
+             .daw7, .daw8, .daw9, .daw10, .daw11, .daw12:
             return Theme.accentPlayback
         case .analog1, .analog2, .analog3, .analog4,
              .spdif1, .spdif2:
@@ -62,5 +83,49 @@ extension SignalSource {
         case .off:
             return Theme.accentOther
         }
+    }
+}
+
+/// A drop-in replacement for SwiftUI's `Picker(.menu)` that always renders
+/// with theme-controlled colors. `Picker(.menu)` on macOS is backed by
+/// `NSPopUpButton` and stubbornly ignores `.foregroundStyle` /
+/// `NSAppearance` overrides in some configurations, leaving us with dark
+/// text on dark panels. `Menu` gives us full label control.
+struct ThemedMenuPicker<T: Hashable & Identifiable>: View {
+    let options: [T]
+    let displayName: (T) -> String
+    @Binding var selection: T
+    var width: CGFloat? = nil
+    var horizontalPadding: CGFloat = 6
+    var verticalPadding: CGFloat = 3
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Menu {
+            ForEach(options) { item in
+                Button(displayName(item)) { selection = item }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(displayName(selection))
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 2)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 7, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, verticalPadding)
+            .frame(width: width)
+            .background(Theme.panelRaised)
+            .clipShape(RoundedRectangle(cornerRadius: 3))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize(horizontal: width == nil, vertical: true)
+        .opacity(isEnabled ? 1.0 : 0.4)
     }
 }
