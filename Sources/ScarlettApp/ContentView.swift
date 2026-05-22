@@ -174,6 +174,7 @@ struct ContentView: View {
         case .connected:    return "checkmark.circle.fill"
         case .waiting:      return "antenna.radiowaves.left.and.right.slash"
         case .disconnected: return "xmark.circle.fill"
+        case .unsupported:  return "exclamationmark.triangle.fill"
         }
     }
     private var connectionColor: Color {
@@ -181,6 +182,7 @@ struct ContentView: View {
         case .connected:    return .green
         case .waiting:      return .orange
         case .disconnected: return .red
+        case .unsupported:  return .yellow
         }
     }
     private var connectionHelp: String {
@@ -188,6 +190,7 @@ struct ContentView: View {
         case .connected:           return "Connected"
         case .waiting:             return "Waiting for device"
         case .disconnected(let r): return "Disconnected — \(r)"
+        case .unsupported(let p):  return "\(p.displayName) — unsupported"
         }
     }
 
@@ -238,6 +241,7 @@ struct ContentView: View {
         case .connected:    return "Connected"
         case .waiting:      return "Waiting for device"
         case .disconnected: return "Disconnected"
+        case .unsupported:  return "Unsupported device"
         }
     }
 
@@ -732,25 +736,30 @@ struct ConnectionOverlayCard: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 380)
-            HStack(spacing: 10) {
-                Button {
-                    state.attemptConnect()
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("Retry now")
-                            .font(.system(size: 12, weight: .semibold))
+            // Retry button only makes sense for waiting/disconnected.  For
+            // "unsupported device" hammering Retry can't change the model
+            // on the bus, so hide it.
+            if case .unsupported = state.connection { EmptyView() } else {
+                HStack(spacing: 10) {
+                    Button {
+                        state.attemptConnect()
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("Retry now")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(Theme.muteActive)
+                        .foregroundStyle(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .background(Theme.muteActive)
-                    .foregroundStyle(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
+                .padding(.top, 4)
             }
-            .padding(.top, 4)
         }
         .padding(.horizontal, 32)
         .padding(.vertical, 28)
@@ -781,6 +790,13 @@ struct ConnectionOverlayCard: View {
                 "Device disconnected",
                 "Reason: \(reason)\nThe app will keep trying to reconnect."
             )
+        case .unsupported(let p):
+            return (
+                .yellow,
+                "exclamationmark.triangle.fill",
+                "\(p.displayName) detected — not yet supported",
+                "This Community Edition currently only supports the Scarlett 8i6 (1st gen).  We've detected your \(p.displayName) on the bus but can't drive its mixer yet — the byte mappings differ between models.\n\nSupport for other 1st-gen Scarletts is on the roadmap. If you'd like to help, the project is open source and the byte tables can be extracted from the original MixControl binary the same way the 8i6 was — see the project README."
+            )
         }
     }
 }
@@ -805,7 +821,7 @@ struct FirstLaunchCard: View {
                     .font(.title3)            // regular weight — visual contrast with the bold title above
                     .foregroundStyle(Theme.textPrimary)
             }
-            Text("For 1st-generation Scarlett interfaces")
+            Text("For the Scarlett 8i6 (1st gen)")
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
             Text("Your Scarlett 8i6 keeps its routing and mixer state in flash. Keep what's already on the device, or start from a clean default config?")

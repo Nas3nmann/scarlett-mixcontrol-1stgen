@@ -17,7 +17,14 @@ import Foundation
 
 // MARK: - Profile structures
 
-public struct DeviceProfile: Sendable {
+public struct DeviceProfile: Sendable, Equatable {
+    /// Two profiles are equal iff they describe the same device (same PID).
+    /// We compare by productID rather than every field because that's the
+    /// only thing that practically distinguishes one from another.
+    public static func == (a: DeviceProfile, b: DeviceProfile) -> Bool {
+        a.productID == b.productID
+    }
+
     /// USB product ID (vendor is always 0x1235 Focusrite).
     public let productID: UInt16
     /// Internal MixControl identifier ("USB14Tracker" etc.) — handy for

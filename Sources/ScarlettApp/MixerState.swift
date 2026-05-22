@@ -9,9 +9,10 @@ import ScarlettCore
 /// the device handle so the UI can render meaningful "waiting" / "disconnected"
 /// states distinct from "open but erroring on a single transfer".
 public enum ConnectionState: Equatable {
-    case waiting               // App is up, nothing plugged in yet
-    case connected             // Device handle opened and last poll succeeded
-    case disconnected(String)  // Was connected, lost — reason for display
+    case waiting                          // App is up, nothing plugged in yet
+    case connected                        // Device handle opened and last poll succeeded
+    case disconnected(String)             // Was connected, lost — reason for display
+    case unsupported(DeviceProfile)       // Found a Focusrite, but it's not the 8i6 we officially support
 }
 
 // View model holding the live device handle, the latest peak meter reading,
@@ -170,6 +171,19 @@ final class MixerState {
         let wasConnected = isConnected
         do {
             let dev = try ScarlettDevice()
+            // We officially support only the 8i6.  Other 1st-gen Scarletts
+            // are detected (so we can tell the user what they have), but
+            // we don't run the matrix/routing flow against them — the byte
+            // tables differ and we'd send wrong commands.
+            guard !dev.profile.isExperimental else {
+                self.device = nil
+                if connection != .unsupported(dev.profile) {
+                    logEvent(.warning, "Connection",
+                             "Detected \(dev.profile.displayName) — not officially supported")
+                }
+                connection = .unsupported(dev.profile)
+                return
+            }
             self.device = dev
             if let bcd = dev.firmwareBCD() {
                 let hi = (bcd >> 8) & 0xff
