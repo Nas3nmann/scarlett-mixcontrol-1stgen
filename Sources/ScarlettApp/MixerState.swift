@@ -142,6 +142,12 @@ final class MixerState {
     /// User-saved presets (full snapshots of routes + matrix + names + links).
     var presets: [ScarlettPreset] = []
 
+    /// Set true once at startup if we detected a first launch (no
+    /// UserDefaults state yet).  ContentView observes this and prompts
+    /// the user with a choice between "apply default config" and "keep
+    /// whatever's already on the device".  Cleared after either choice.
+    var showFirstLaunchPrompt: Bool = false
+
     /// Capped event log — surfaced in the Device tab.  Newest first.
     var deviceEvents: [DeviceEvent] = []
     @ObservationIgnored private let maxEvents = 100
@@ -318,12 +324,13 @@ final class MixerState {
     // Everything else (gains, mutes, atten, clock, etc.) is reliably read on
     // launch via refreshFromDevice and doesn't need to be saved.
 
-    private static let routesKey         = "scarlett.routes.v1"
-    private static let busTabKey         = "scarlett.selectedBus.v1"
-    private static let matrixKey         = "scarlett.matrix.v1"
-    private static let presetsKey        = "scarlett.presets.v1"
-    private static let captureRoutesKey  = "scarlett.captureRoutes.v1"
-    private static let monitorMonoKey    = "scarlett.monitorMono.v1"
+    private static let routesKey            = "scarlett.routes.v1"
+    private static let busTabKey            = "scarlett.selectedBus.v1"
+    private static let matrixKey            = "scarlett.matrix.v1"
+    private static let presetsKey           = "scarlett.presets.v1"
+    private static let captureRoutesKey     = "scarlett.captureRoutes.v1"
+    private static let monitorMonoKey       = "scarlett.monitorMono.v1"
+    private static let firstLaunchDoneKey   = "scarlett.firstLaunchCompleted.v1"
 
     private struct PersistedMatrix: Codable {
         var gains: [[Double]]?       // legacy, no longer written, kept for decode-only
@@ -426,6 +433,28 @@ final class MixerState {
            let decoded = try? JSONDecoder().decode([ScarlettPreset].self, from: data) {
             presets = decoded
         }
+
+        // First-launch detection: ask the user what to do.  We do NOT
+        // auto-apply defaults — the device retains its full DSP state in
+        // non-volatile flash across power cycles, and silently
+        // overwriting that on first launch could wipe a setup the user
+        // built with another tool (the original MixControl on older
+        // macOS, for instance).  Instead, surface a choice via
+        // `showFirstLaunchPrompt`; ContentView will present an alert
+        // when the device is connected.
+        if !defaults.bool(forKey: Self.firstLaunchDoneKey) {
+            showFirstLaunchPrompt = true
+        }
+    }
+
+    /// Called when the user picks "Apply defaults" from the first-launch
+    /// prompt.  Marks the prompt as resolved either way.
+    func userCompleteFirstLaunch(applyDefaults: Bool) {
+        if applyDefaults {
+            userResetRoutingAndMatrix()
+        }
+        UserDefaults.standard.set(true, forKey: Self.firstLaunchDoneKey)
+        showFirstLaunchPrompt = false
     }
 
     private func saveRoutes() {

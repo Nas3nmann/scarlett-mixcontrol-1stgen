@@ -46,23 +46,38 @@ struct ContentView: View {
     @State private var sidebarCollapsed: Bool = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-            // Vertical divider extends from the very top of the window —
-            // including through the (transparent) title bar — so the
-            // sidebar/main split is visually continuous.
-            Rectangle()
-                .fill(Theme.divider)
-                .frame(width: 1)
-                .ignoresSafeArea(edges: .top)
-            detail
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ZStack {
+            HStack(spacing: 0) {
+                sidebar
+                // Vertical divider extends from the very top of the window
+                // — including through the (transparent) title bar — so the
+                // sidebar/main split is visually continuous.
+                Rectangle()
+                    .fill(Theme.divider)
+                    .frame(width: 1)
+                    .ignoresSafeArea(edges: .top)
+                detail
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .animation(.easeInOut(duration: 0.22), value: sidebarCollapsed)
+            .background(Theme.background)
+            .blur(radius: showFirstLaunchPrompt ? 6 : 0)
+
+            if showFirstLaunchPrompt {
+                Color.black.opacity(0.45).ignoresSafeArea()
+                FirstLaunchCard(state: state)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(.easeInOut(duration: 0.22), value: sidebarCollapsed)
-        .background(Theme.background)
         .preferredColorScheme(.dark)
         .task { state.startMeterPolling() }
+    }
+
+    /// Show the first-launch dialog only when the device is actually
+    /// connected — that way the user knows their device is recognised
+    /// before they have to decide whether to overwrite its state.
+    private var showFirstLaunchPrompt: Bool {
+        state.showFirstLaunchPrompt && state.isConnected
     }
 
     // The window's title bar shows "Scarlett MixControl" against the dark
@@ -478,6 +493,19 @@ extension RoutingView {
 struct DeviceView: View {
     @Bindable var state: MixerState
 
+    private func compatRow(symbol: String, color: Color, text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: 11))
+                .foregroundStyle(color)
+                .frame(width: 14)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -560,6 +588,61 @@ struct DeviceView: View {
                 }
 
                 EventLogPanel(state: state)
+
+                Panel(title: "About") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            Text("Scarlett MixControl — Community Edition")
+                                .font(.subheadline.bold())
+                                .foregroundStyle(Theme.textPrimary)
+                            Text("v\(AppInfo.version)")
+                                .font(.subheadline.monospacedDigit())
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                        Text("A community replacement for Focusrite's 32-bit MixControl, which doesn't run on modern macOS.")
+                            .font(.caption).foregroundStyle(Theme.textSecondary)
+                        Text("Built by @MarecekW.")
+                            .font(.caption).foregroundStyle(Theme.textSecondary)
+                            .padding(.top, 4)
+
+                        Divider().padding(.vertical, 6)
+
+                        Text("Compatibility")
+                            .font(.subheadline.bold())
+                            .foregroundStyle(Theme.textPrimary)
+                        Text("Original MixControl supported six 1st-generation Scarlett interfaces. So far only the 8i6 has been ported here — the others share the protocol family but each has its own byte tables to reverse-engineer from the original binary.")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.bottom, 2)
+                        VStack(alignment: .leading, spacing: 3) {
+                            compatRow(symbol: "checkmark.circle.fill",
+                                      color: .green,
+                                      text: "Scarlett 8i6 — tested, primary target")
+                            compatRow(symbol: "questionmark.circle",
+                                      color: .orange,
+                                      text: "Scarlett 6i6 — supported by original MixControl, not yet ported")
+                            compatRow(symbol: "questionmark.circle",
+                                      color: .orange,
+                                      text: "Scarlett 16i8 — supported by original MixControl, not yet ported")
+                            compatRow(symbol: "questionmark.circle",
+                                      color: .orange,
+                                      text: "Scarlett 18i6 — supported by original MixControl, not yet ported")
+                            compatRow(symbol: "questionmark.circle",
+                                      color: .orange,
+                                      text: "Scarlett 18i8 — supported by original MixControl, not yet ported")
+                            compatRow(symbol: "questionmark.circle",
+                                      color: .orange,
+                                      text: "Scarlett 18i20 — supported by original MixControl, not yet ported")
+                            compatRow(symbol: "xmark.circle.fill",
+                                      color: .red,
+                                      text: "2nd / 3rd / 4th-gen Scarletts — different protocol, won't work")
+                            compatRow(symbol: "xmark.circle.fill",
+                                      color: .red,
+                                      text: "Saffire / other Focusrite families — different USB layer entirely")
+                        }
+                    }
+                }
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -694,6 +777,75 @@ struct ConnectionOverlayCard: View {
                 "Reason: \(reason)\nThe app will keep trying to reconnect."
             )
         }
+    }
+}
+
+/// First-launch welcome card — styled like `ConnectionOverlayCard` so the
+/// app's modal language is consistent.  Asks the user whether to keep the
+/// device's existing on-flash state or overwrite it with the app's sensible
+/// defaults.
+struct FirstLaunchCard: View {
+    @Bindable var state: MixerState
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "hand.wave.fill")
+                .font(.system(size: 44, weight: .regular))
+                .foregroundStyle(.blue)
+            VStack(spacing: 2) {
+                Text("Scarlett MixControl")
+                    .font(.title3.bold())
+                    .foregroundStyle(Theme.textPrimary)
+                Text("Community Edition")
+                    .font(.title3)            // regular weight — visual contrast with the bold title above
+                    .foregroundStyle(Theme.textPrimary)
+            }
+            Text("For 1st-generation Scarlett interfaces")
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+            Text("Your Scarlett 8i6 keeps its routing and mixer state in flash. Keep what's already on the device, or start from a clean default config?")
+                .font(.callout)
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 380)
+            HStack(spacing: 10) {
+                Button {
+                    state.userCompleteFirstLaunch(applyDefaults: false)
+                } label: {
+                    Text("Keep existing")
+                        .font(.system(size: 12, weight: .semibold))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(Theme.panelRaised)
+                        .foregroundStyle(Theme.textPrimary)
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                }
+                .buttonStyle(.plain)
+                Button {
+                    state.userCompleteFirstLaunch(applyDefaults: true)
+                } label: {
+                    Text("Apply defaults")
+                        .font(.system(size: 12, weight: .semibold))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(Color.blue)
+                        .foregroundStyle(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.top, 4)
+        }
+        .padding(.horizontal, 32)
+        .padding(.vertical, 28)
+        .background(Theme.panel)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.blue.opacity(0.45), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .shadow(color: .black.opacity(0.45), radius: 24, y: 4)
     }
 }
 
