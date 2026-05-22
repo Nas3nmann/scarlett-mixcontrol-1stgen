@@ -69,37 +69,62 @@ public enum ScarlettError: Error, CustomStringConvertible {
 public final class ScarlettDevice {
     typealias DeviceIface = UnsafeMutablePointer<UnsafeMutablePointer<IOUSBDeviceInterface>?>
 
-    public static let scarlett8i6Gen1VID: UInt16 = 0x1235
-    public static let scarlett8i6Gen1PID: UInt16 = 0x8002
+    public static let focusriteVID: UInt16 = 0x1235
+
+    /// The profile that matched the connected device's PID.  Drives every
+    /// model-specific decision in the UI and protocol layer (byte values,
+    /// matrix dimensions, hardware-switch availability).
+    public let profile: DeviceProfile
 
     private let service: io_service_t
     private let iface: DeviceIface
 
-    public init(vid: UInt16 = scarlett8i6Gen1VID, pid: UInt16 = scarlett8i6Gen1PID) throws {
+    /// Open the first 1st-gen Scarlett we find on the bus.  Searches for
+    /// any of the PIDs declared in `DeviceProfile.all`; the matching
+    /// profile is exposed as `self.profile`.
+    public init() throws {
+        // Enumerate every Focusrite USB device, pick the first one whose
+        // PID matches a known DeviceProfile.
         let match = IOServiceMatching(kIOUSBDeviceClassName) as NSMutableDictionary
-        match[kUSBVendorID] = NSNumber(value: vid)
-        match[kUSBProductID] = NSNumber(value: pid)
+        match[kUSBVendorID] = NSNumber(value: Self.focusriteVID)
 
         var iter: io_iterator_t = 0
         let kr = IOServiceGetMatchingServices(kIOMainPortDefault, match, &iter)
         guard kr == KERN_SUCCESS else { throw ScarlettError.ioReturn("IOServiceGetMatchingServices", kr) }
         defer { IOObjectRelease(iter) }
 
-        let svc = IOIteratorNext(iter)
-        guard svc != 0 else { throw ScarlettError.deviceNotFound(vid: vid, pid: pid) }
-        self.service = svc
+        var picked: (svc: io_service_t, profile: DeviceProfile)? = nil
+        while true {
+            let svc = IOIteratorNext(iter)
+            if svc == 0 { break }
+            let pidNum = IORegistryEntrySearchCFProperty(
+                svc, kIOServicePlane, kUSBProductID as CFString, nil,
+                IOOptionBits(kIORegistryIterateRecursively | kIORegistryIterateParents)
+            )
+            let pid = (pidNum as? NSNumber)?.uint16Value ?? 0
+            if let profile = DeviceProfile.forProductID(pid) {
+                picked = (svc, profile)
+                break
+            }
+            IOObjectRelease(svc)
+        }
+        guard let picked else {
+            throw ScarlettError.deviceNotFound(vid: Self.focusriteVID, pid: 0)
+        }
+        self.service = picked.svc
+        self.profile = picked.profile
 
         var pluginPtr: UnsafeMutablePointer<UnsafeMutablePointer<IOCFPlugInInterface>?>?
         var score: Int32 = 0
         let kp = IOCreatePlugInInterfaceForService(
-            svc,
+            picked.svc,
             UUID_IOUSBDeviceUserClientTypeID,
             UUID_IOCFPlugInInterfaceID,
             &pluginPtr,
             &score
         )
         guard kp == KERN_SUCCESS, let plugin = pluginPtr else {
-            IOObjectRelease(svc)
+            IOObjectRelease(picked.svc)
             throw ScarlettError.ioReturn("IOCreatePlugInInterfaceForService", kp)
         }
         defer { _ = plugin.pointee?.pointee.Release(plugin) }
@@ -110,7 +135,7 @@ public final class ScarlettDevice {
             plugin.pointee!.pointee.QueryInterface(plugin, uuid, ptr)
         }
         guard hr == 0, let raw = rawIface else {
-            IOObjectRelease(svc)
+            IOObjectRelease(picked.svc)
             throw ScarlettError.queryInterface(hr)
         }
         self.iface = DeviceIface(OpaquePointer(raw))

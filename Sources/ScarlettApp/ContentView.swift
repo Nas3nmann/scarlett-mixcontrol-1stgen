@@ -651,13 +651,18 @@ struct DeviceView: View {
     }
 
     private var hardwareRows: [InfoGrid.Row] {
-        [
-            .init(label: "Model",        value: "Scarlett 8i6"),
-            .init(label: "Generation",   value: "1st Gen (released ~2012)"),
+        // Use the detected device's profile when one is connected, else
+        // fall back to the 8i6 (the primary target).
+        let profile = state.device?.profile ?? .scarlett8i6
+        return [
+            .init(label: "Model",        value: profile.displayName),
+            .init(label: "Generation",   value: profile.isExperimental
+                  ? "1st Gen — experimental support"
+                  : "1st Gen (officially supported)"),
             .init(label: "Firmware",     value: state.firmware),
             .init(label: "Serial",       value: state.serial),
             .init(label: "Vendor",       value: "Focusrite (0x1235)"),
-            .init(label: "Product",      value: String(format: "0x%04X", ScarlettDevice.scarlett8i6Gen1PID)),
+            .init(label: "Product",      value: String(format: "0x%04X", profile.productID)),
         ]
     }
 
