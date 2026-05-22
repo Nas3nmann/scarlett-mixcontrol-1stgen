@@ -24,7 +24,13 @@ for the <strong>1st-generation Scarlett 8i6</strong>.
 </div>
 
 > [!NOTE]
-> The original MixControl was 32-bit only and stopped working when macOS dropped 32-bit support in Catalina (10.15). If you own a 1st-gen Scarlett 8i6 and want to use its built-in DSP mixer on a modern Mac, this is for you.
+> Focusrite discontinued MixControl years ago. On modern macOS the app still launches but no longer finds the device — so the matrix mixer, routing, and DSP features your hardware actually has are unreachable. If you own a 1st-gen Scarlett 8i6 and want to use those features again on a modern Mac, this is for you.
+
+<br/>
+
+<div align="center">
+  <img src="docs/screenshots/scr-mixcontrol-mixer.png" alt="Mixer tab — 18×6 matrix mixer with live peak meters" width="80%" />
+</div>
 
 <br/>
 
@@ -41,6 +47,27 @@ for the <strong>1st-generation Scarlett 8i6</strong>.
 | 💾  | **Save to hardware** — persist mixer state to device flash, survives power cycle            |
 | 📁  | **Snapshots** — save / load full configurations as `.8i6` JSON files (⌘S / ⌘O)              |
 | 🔌  | **Connection resilience** — auto-reconnect on USB drops, clear status overlay               |
+
+<br/>
+
+<div align="center">
+  <table>
+    <tr>
+      <td align="center">
+        <img src="docs/screenshots/scr-mixcontrol-routing.png" alt="Routing tab" width="100%" /><br/>
+        <sub><strong>Routing</strong> — physical outputs + USB capture</sub>
+      </td>
+      <td align="center">
+        <img src="docs/screenshots/scr-mixcontrol-presets.png" alt="Presets tab" width="100%" /><br/>
+        <sub><strong>Presets</strong> — save / load full configurations</sub>
+      </td>
+      <td align="center">
+        <img src="docs/screenshots/scr-mixcontrol-device.png" alt="Device tab" width="100%" /><br/>
+        <sub><strong>Device</strong> — hardware info, clock, event log</sub>
+      </td>
+    </tr>
+  </table>
+</div>
 
 <br/>
 
