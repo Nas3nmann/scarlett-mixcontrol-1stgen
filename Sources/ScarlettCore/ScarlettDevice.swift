@@ -1,0 +1,193 @@
+import Foundation
+import IOKit
+import IOKit.usb
+import IOKit.usb.IOUSBLib
+
+// MARK: - UUIDs (Swift can't import the CFUUIDGetConstantUUIDWithBytes macros)
+
+private func makeUUID(_ b: UInt8...) -> CFUUID {
+    precondition(b.count == 16)
+    let bytes = CFUUIDBytes(
+        byte0: b[0],  byte1: b[1],  byte2: b[2],  byte3: b[3],
+        byte4: b[4],  byte5: b[5],  byte6: b[6],  byte7: b[7],
+        byte8: b[8],  byte9: b[9],  byte10: b[10], byte11: b[11],
+        byte12: b[12], byte13: b[13], byte14: b[14], byte15: b[15]
+    )
+    return CFUUIDCreateFromUUIDBytes(nil, bytes)
+}
+
+// C244E858-109C-11D4-91D4-0050E4C6426F
+private let UUID_IOCFPlugInInterfaceID = makeUUID(
+    0xC2, 0x44, 0xE8, 0x58, 0x10, 0x9C, 0x11, 0xD4,
+    0x91, 0xD4, 0x00, 0x50, 0xE4, 0xC6, 0x42, 0x6F
+)
+// 9DC7B780-9EC0-11D4-A54F-000A27052861
+private let UUID_IOUSBDeviceUserClientTypeID = makeUUID(
+    0x9D, 0xC7, 0xB7, 0x80, 0x9E, 0xC0, 0x11, 0xD4,
+    0xA5, 0x4F, 0x00, 0x0A, 0x27, 0x05, 0x28, 0x61
+)
+// 5C8187D0-9EF3-11D4-8B45-000A27052861 (IOUSBDeviceInterface — base, has DeviceRequest)
+private let UUID_IOUSBDeviceInterfaceID100 = makeUUID(
+    0x5C, 0x81, 0x87, 0xD0, 0x9E, 0xF3, 0x11, 0xD4,
+    0x8B, 0x45, 0x00, 0x0A, 0x27, 0x05, 0x28, 0x61
+)
+
+// MARK: - Errors
+
+public enum ScarlettError: Error, CustomStringConvertible {
+    case deviceNotFound(vid: UInt16, pid: UInt16)
+    case ioReturn(String, IOReturn)
+    case queryInterface(HRESULT)
+    case invalidArgument(String)
+
+    public var description: String {
+        switch self {
+        case .deviceNotFound(let v, let p):
+            return String(format: "Scarlett not found (VID 0x%04x / PID 0x%04x).", v, p)
+        case .ioReturn(let op, let r):
+            return String(format: "%@ failed: 0x%08x (%d)", op, UInt32(bitPattern: r), r)
+        case .queryInterface(let h):
+            return String(format: "QueryInterface failed: 0x%08x", UInt32(bitPattern: Int32(h)))
+        case .invalidArgument(let m):
+            return "invalid argument: \(m)"
+        }
+    }
+}
+
+// MARK: - ScarlettDevice
+//
+// Wraps an `IOUSBDeviceInterface**` and exposes the two control-transfer
+// primitives the Scarlett protocol uses:
+//   - controlOut(cmd, value, index, data)  →  bmRequestType 0x21, write
+//   - controlIn (cmd, value, index, len)   →  bmRequestType 0xa1, read
+//
+// We do NOT call USBDeviceOpen — it returns kIOReturnExclusiveAccess on
+// macOS because usbaudiod has the device's audio interfaces claimed.
+// DeviceRequest on endpoint 0 works without opening the device.
+// (See memory: project-usb-access-path.)
+
+public final class ScarlettDevice {
+    typealias DeviceIface = UnsafeMutablePointer<UnsafeMutablePointer<IOUSBDeviceInterface>?>
+
+    public static let scarlett8i6Gen1VID: UInt16 = 0x1235
+    public static let scarlett8i6Gen1PID: UInt16 = 0x8002
+
+    private let service: io_service_t
+    private let iface: DeviceIface
+
+    public init(vid: UInt16 = scarlett8i6Gen1VID, pid: UInt16 = scarlett8i6Gen1PID) throws {
+        let match = IOServiceMatching(kIOUSBDeviceClassName) as NSMutableDictionary
+        match[kUSBVendorID] = NSNumber(value: vid)
+        match[kUSBProductID] = NSNumber(value: pid)
+
+        var iter: io_iterator_t = 0
+        let kr = IOServiceGetMatchingServices(kIOMainPortDefault, match, &iter)
+        guard kr == KERN_SUCCESS else { throw ScarlettError.ioReturn("IOServiceGetMatchingServices", kr) }
+        defer { IOObjectRelease(iter) }
+
+        let svc = IOIteratorNext(iter)
+        guard svc != 0 else { throw ScarlettError.deviceNotFound(vid: vid, pid: pid) }
+        self.service = svc
+
+        var pluginPtr: UnsafeMutablePointer<UnsafeMutablePointer<IOCFPlugInInterface>?>?
+        var score: Int32 = 0
+        let kp = IOCreatePlugInInterfaceForService(
+            svc,
+            UUID_IOUSBDeviceUserClientTypeID,
+            UUID_IOCFPlugInInterfaceID,
+            &pluginPtr,
+            &score
+        )
+        guard kp == KERN_SUCCESS, let plugin = pluginPtr else {
+            IOObjectRelease(svc)
+            throw ScarlettError.ioReturn("IOCreatePlugInInterfaceForService", kp)
+        }
+        defer { _ = plugin.pointee?.pointee.Release(plugin) }
+
+        let uuid = CFUUIDGetUUIDBytes(UUID_IOUSBDeviceInterfaceID100)
+        var rawIface: LPVOID?
+        let hr = withUnsafeMutablePointer(to: &rawIface) { ptr -> HRESULT in
+            plugin.pointee!.pointee.QueryInterface(plugin, uuid, ptr)
+        }
+        guard hr == 0, let raw = rawIface else {
+            IOObjectRelease(svc)
+            throw ScarlettError.queryInterface(hr)
+        }
+        self.iface = DeviceIface(OpaquePointer(raw))
+    }
+
+    deinit {
+        _ = iface.pointee?.pointee.Release(iface)
+        IOObjectRelease(service)
+    }
+
+    // MARK: - Control transfers
+
+    /// Class request, OUT (Host→Device).  bmRequestType = 0x21.
+    public func controlOut(cmd: UInt8, value: UInt16, index: UInt16, data: [UInt8]) throws {
+        var buf = data
+        let len = UInt16(buf.count)
+        let kr = buf.withUnsafeMutableBufferPointer { bp -> IOReturn in
+            var req = IOUSBDevRequest(
+                bmRequestType: 0x21,
+                bRequest: cmd,
+                wValue: value,
+                wIndex: index,
+                wLength: len,
+                pData: bp.baseAddress,
+                wLenDone: 0
+            )
+            return iface.pointee!.pointee.DeviceRequest(iface, &req)
+        }
+        guard kr == kIOReturnSuccess else {
+            throw ScarlettError.ioReturn(
+                String(format: "controlOut(cmd=0x%02x val=0x%04x idx=0x%04x len=%d)",
+                       cmd, value, index, data.count),
+                kr
+            )
+        }
+    }
+
+    /// Class request, IN (Device→Host).  bmRequestType = 0xa1.
+    public func controlIn(cmd: UInt8, value: UInt16, index: UInt16, length: UInt16) throws -> [UInt8] {
+        var buf = [UInt8](repeating: 0, count: Int(length))
+        let kr = buf.withUnsafeMutableBufferPointer { bp -> IOReturn in
+            var req = IOUSBDevRequest(
+                bmRequestType: 0xa1,
+                bRequest: cmd,
+                wValue: value,
+                wIndex: index,
+                wLength: length,
+                pData: bp.baseAddress,
+                wLenDone: 0
+            )
+            return iface.pointee!.pointee.DeviceRequest(iface, &req)
+        }
+        guard kr == kIOReturnSuccess else {
+            throw ScarlettError.ioReturn(
+                String(format: "controlIn(cmd=0x%02x val=0x%04x idx=0x%04x len=%d)",
+                       cmd, value, index, length),
+                kr
+            )
+        }
+        return buf
+    }
+
+    // MARK: - Device info
+
+    public func firmwareBCD() -> UInt16? {
+        let key = "bcdDevice" as CFString
+        guard let cf = IORegistryEntryCreateCFProperty(service, key, kCFAllocatorDefault, 0) else {
+            return nil
+        }
+        return (cf.takeRetainedValue() as? NSNumber)?.uint16Value
+    }
+
+    public func serialNumber() -> String? {
+        let key = "USB Serial Number" as CFString
+        guard let cf = IORegistryEntryCreateCFProperty(service, key, kCFAllocatorDefault, 0) else {
+            return nil
+        }
+        return cf.takeRetainedValue() as? String
+    }
+}
