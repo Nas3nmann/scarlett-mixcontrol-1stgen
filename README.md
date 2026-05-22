@@ -150,7 +150,7 @@ Standing on shoulders:
 
 ## 📜 License
 
-[MIT](LICENSE) — copyright © 2026 Marek Kramár.
+Released under the [MIT](LICENSE) license.
 
 This is an independent community project. It is not affiliated with, endorsed by, or supported by Focusrite Audio Engineering Ltd. "Scarlett", "MixControl", and "Focusrite" are trademarks of their respective owners.
 
