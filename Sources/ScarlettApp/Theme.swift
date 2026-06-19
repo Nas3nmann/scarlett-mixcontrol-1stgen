@@ -78,7 +78,8 @@ extension SignalSource {
              .daw7, .daw8, .daw9, .daw10, .daw11, .daw12:
             return Theme.accentPlayback
         case .analog1, .analog2, .analog3, .analog4,
-             .spdif1, .spdif2:
+             .spdif1, .spdif2,
+             .adat1, .adat2, .adat3, .adat4, .adat5, .adat6, .adat7, .adat8:
             return Theme.accentAnalog
         case .off:
             return Theme.accentOther

@@ -66,12 +66,12 @@ struct PinnedDawStrip: View {
             }
 
             VStack(spacing: 1) {
-                StripMeter(state: state, source: .daw1, height: 220)
+                StripMeter(state: state, source: .daw1, profile: state.profile, height: 220)
                 Text("L").font(.system(size: 8, design: .monospaced))
                     .foregroundStyle(Theme.textSecondary)
             }
             VStack(spacing: 1) {
-                StripMeter(state: state, source: .daw2, height: 220)
+                StripMeter(state: state, source: .daw2, profile: state.profile, height: 220)
                 Text("R").font(.system(size: 8, design: .monospaced))
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -88,10 +88,10 @@ struct PinnedDawStrip: View {
     }
 
     private var peakReadout: some View {
-        let peakL = StripMeter.level(from: state.peaksHeld, source: .daw1)
-        let peakR = StripMeter.level(from: state.peaksHeld, source: .daw2)
-        let maxL  = StripMeter.level(from: state.peaksMax,  source: .daw1)
-        let maxR  = StripMeter.level(from: state.peaksMax,  source: .daw2)
+        let peakL = StripMeter.level(from: state.peaksHeld, source: .daw1, profile: state.profile)
+        let peakR = StripMeter.level(from: state.peaksHeld, source: .daw2, profile: state.profile)
+        let maxL  = StripMeter.level(from: state.peaksMax,  source: .daw1, profile: state.profile)
+        let maxR  = StripMeter.level(from: state.peaksMax,  source: .daw2, profile: state.profile)
         let peak = max(peakL, peakR)
         let max_ = max(maxL, maxR)
         return VStack(spacing: 1) {
@@ -156,8 +156,8 @@ struct PinnedMasterStrip: View {
                     get: { state.monitorAtten },
                     set: { state.userSetMonitorAtten($0) }
                 ),
-                leftRoute: .monitorLeft,
-                rightRoute: .monitorRight,
+                leftWValue: 0,
+                rightWValue: 1,
                 leftMuted: state.monitorLMuted,
                 rightMuted: state.monitorRMuted,
                 toggleLeft: {
@@ -179,8 +179,8 @@ struct PinnedMasterStrip: View {
                     get: { state.phonesAtten },
                     set: { state.userSetPhonesAtten($0) }
                 ),
-                leftRoute: .phonesLeft,
-                rightRoute: .phonesRight,
+                leftWValue: 2,
+                rightWValue: 3,
                 leftMuted: state.phonesLMuted,
                 rightMuted: state.phonesRMuted,
                 toggleLeft: {
@@ -208,10 +208,8 @@ struct OutputStrip: View {
     let title: String
     let subtitle: String
     @Binding var atten: Double
-    /// The Route enum cases for this strip's L and R outputs.  Used to
-    /// look up the current source via `state.routes[leftRoute]`.
-    let leftRoute: Route
-    let rightRoute: Route
+    let leftWValue: UInt16
+    let rightWValue: UInt16
     let leftMuted: Bool
     let rightMuted: Bool
     let toggleLeft: () -> Void
@@ -222,8 +220,8 @@ struct OutputStrip: View {
 
     /// Source feeding the L/R output right now (per the router).
     /// Defaults to .off when no route has been set yet.
-    private var leftSource:  MixBus { state.routes[leftRoute]  ?? .off }
-    private var rightSource: MixBus { state.routes[rightRoute] ?? .off }
+    private var leftSource:  MixBus { state.route(forOutput: leftWValue) }
+    private var rightSource: MixBus { state.route(forOutput: rightWValue) }
 
     var body: some View {
         VStack(spacing: StripLayout.vSpacing) {
@@ -264,8 +262,8 @@ struct OutputStrip: View {
             VerticalFader(db: $atten, dbRange: -60...0)
                 .contextMenu { Button("Reset to 0 dB") { atten = 0 } }
 
-            RoutedMeter(state: state, source: leftSource)
-            RoutedMeter(state: state, source: rightSource)
+            RoutedMeter(state: state, source: leftSource, profile: state.profile)
+            RoutedMeter(state: state, source: rightSource, profile: state.profile)
 
             DbScale(
                 dbRange: -60...0,
@@ -283,10 +281,10 @@ struct OutputStrip: View {
 
     /// Pk / Mx based on the louder of the two currently-routed sources.
     private var peakReadout: some View {
-        let peakL = RoutedMeter.level(from: state.peaksHeld, source: leftSource)
-        let peakR = RoutedMeter.level(from: state.peaksHeld, source: rightSource)
-        let maxL  = RoutedMeter.level(from: state.peaksMax,  source: leftSource)
-        let maxR  = RoutedMeter.level(from: state.peaksMax,  source: rightSource)
+        let peakL = RoutedMeter.level(from: state.peaksHeld, source: leftSource, profile: state.profile)
+        let peakR = RoutedMeter.level(from: state.peaksHeld, source: rightSource, profile: state.profile)
+        let maxL  = RoutedMeter.level(from: state.peaksMax,  source: leftSource, profile: state.profile)
+        let maxR  = RoutedMeter.level(from: state.peaksMax,  source: rightSource, profile: state.profile)
         let peak = max(peakL, peakR)
         let max_ = max(maxL, maxR)
         return VStack(spacing: 1) {
@@ -339,16 +337,17 @@ struct OutputStrip: View {
 struct RoutedMeter: View {
     @Bindable var state: MixerState
     let source: MixBus
+    let profile: DeviceProfile
     var height: CGFloat = 220
 
     var body: some View {
-        let live = Self.level(from: state.peaks,    source: source)
-        let held = Self.level(from: state.peaksHeld, source: source)
-        let max_ = Self.level(from: state.peaksMax,  source: source)
+        let live = Self.level(from: state.peaks,    source: source, profile: profile)
+        let held = Self.level(from: state.peaksHeld, source: source, profile: profile)
+        let max_ = Self.level(from: state.peaksMax,  source: source, profile: profile)
         VerticalMeter(db: live, peakDb: held, maxPeakDb: max_, height: height)
     }
 
-    static func level(from reading: PeakReading, source: MixBus) -> Double {
-        reading.level(for: source)
+    static func level(from reading: PeakReading, source: MixBus, profile: DeviceProfile) -> Double {
+        reading.level(for: source, profile: profile)
     }
 }

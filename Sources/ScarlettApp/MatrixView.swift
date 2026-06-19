@@ -3,7 +3,7 @@ import ScarlettCore
 
 /// The matrix mixer view — Control 2 style.
 ///
-/// Top bar: bus tabs (Mix M1..M6).
+/// Top bar: bus tabs (Mix M1..Mn).
 /// Below: horizontally scrolling row of `ChannelStrip`s, one per matrix
 /// channel that we expose to the user (first 14 of the 18 protocol slots —
 /// the rest aren't useful on the 8i6).
@@ -32,7 +32,7 @@ struct MatrixMixerView: View {
 
     private var busTabs: some View {
         HStack(spacing: 4) {
-            ForEach(MixBus.matrixOutputs) { bus in
+            ForEach(state.matrixBuses) { bus in
                 let selected = state.selectedBus == bus
                 Button {
                     state.selectedBus = bus
@@ -77,7 +77,7 @@ struct MatrixMixerView: View {
     private func copyMixMenuItems(targetBus: MixBus) -> some View {
         let sourcePair = targetBus.stereoPairIndex ?? 0
         let pairLabel: (Int) -> String = { p in "M\(p*2 + 1)+M\(p*2 + 2)" }
-        ForEach(0..<3, id: \.self) { dest in
+        ForEach(0..<state.stereoPairCount, id: \.self) { dest in
             if dest != sourcePair {
                 Button("Copy \(pairLabel(sourcePair)) → \(pairLabel(dest))") {
                     state.userCopyMixPair(from: sourcePair, to: dest)

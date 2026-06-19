@@ -84,7 +84,7 @@ struct ChannelStrip: View {
         VStack(spacing: 3) {
             nameField
             ThemedMenuPicker(
-                options: SignalSource.availableOn8i6,
+                options: state.matrixSourceOptions,
                 displayName: { $0.displayName },
                 selection: Binding(
                     get: { state.mixerSources[channel] },
@@ -162,7 +162,7 @@ struct ChannelStrip: View {
             // Reads peaks/peaksHeld/peaksMax internally → isolated from the
             // outer strip body so 20 Hz meter updates only re-render this
             // small view, not the whole strip (faders, pickers, buttons, …).
-            StripMeter(state: state, source: source)
+            StripMeter(state: state, source: source, profile: state.profile)
 
             DbScale()
         }
@@ -206,7 +206,7 @@ struct ChannelStrip: View {
 
     private var peakReadout: some View {
         let source = state.mixerSources[channel]
-        return StripPeakReadout(state: state, source: source)
+        return StripPeakReadout(state: state, source: source, profile: state.profile)
     }
 
     // MARK: - Mute / Solo
@@ -272,54 +272,27 @@ struct HiLoSwitch: View {
 struct StripMeter: View {
     @Bindable var state: MixerState
     let source: SignalSource
+    let profile: DeviceProfile
     var height: CGFloat = 220
 
     var body: some View {
-        let live = level(from: state.peaks)
-        let held = level(from: state.peaksHeld)
-        let max_ = level(from: state.peaksMax)
+        let bus = MixBus(rawValue: source.rawValue) ?? .off
+        let live = Self.level(from: state.peaks, source: source, profile: profile)
+        let held = Self.level(from: state.peaksHeld, source: source, profile: profile)
+        let max_ = Self.level(from: state.peaksMax, source: source, profile: profile)
         VerticalMeter(db: live, peakDb: held, maxPeakDb: max_, height: height)
     }
 
-    private func level(from peaks: PeakReading) -> Double {
-        Self.level(from: peaks, source: source)
-    }
-
-    static func level(from peaks: PeakReading, source: SignalSource) -> Double {
-        // Defer to PeakReading.level(for: MixBus) — every SignalSource case has
-        // the same raw byte value as the corresponding MixBus case, so a
-        // raw-value cross-conversion is exact.
-        peaks.level(for: MixBus(rawValue: source.rawValue) ?? .off)
+    static func level(from peaks: PeakReading, source: SignalSource, profile: DeviceProfile) -> Double {
+        let bus = MixBus(rawValue: source.rawValue) ?? .off
+        return peaks.level(for: bus, profile: profile)
     }
 }
 
 extension PeakReading {
-    /// Look up the meter value for whichever device-side meter slot
-    /// corresponds to a given signal source.  Returns -∞ for `.off` or
-    /// for sources the device doesn't surface a meter for.
+    /// 8i6 fallback meter lookup (legacy call sites).
     func level(for source: MixBus) -> Double {
-        switch source {
-        case .off, .daw7, .daw8, .daw9, .daw10, .daw11, .daw12:
-            return -.infinity
-        case .daw1:    return daw[0]
-        case .daw2:    return daw[1]
-        case .daw3:    return daw[2]
-        case .daw4:    return daw[3]
-        case .daw5:    return daw[4]
-        case .daw6:    return daw[5]
-        case .analog1: return inputs[0]
-        case .analog2: return inputs[1]
-        case .analog3: return inputs[2]
-        case .analog4: return inputs[3]
-        case .spdif1:  return inputs[8]
-        case .spdif2:  return inputs[9]
-        case .m1:      return mixer[0]
-        case .m2:      return mixer[1]
-        case .m3:      return mixer[2]
-        case .m4:      return mixer[3]
-        case .m5:      return mixer[4]
-        case .m6:      return mixer[5]
-        }
+        level(for: source, profile: .scarlett8i6)
     }
 }
 
@@ -328,10 +301,11 @@ extension PeakReading {
 struct StripPeakReadout: View {
     @Bindable var state: MixerState
     let source: SignalSource
+    let profile: DeviceProfile
 
     var body: some View {
-        let peak = StripMeter.level(from: state.peaksHeld, source: source)
-        let max_ = StripMeter.level(from: state.peaksMax, source: source)
+        let peak = StripMeter.level(from: state.peaksHeld, source: source, profile: profile)
+        let max_ = StripMeter.level(from: state.peaksMax, source: source, profile: profile)
         VStack(spacing: 1) {
             Text(formatPeak("Pk", peak))
                 .font(.system(size: 9, design: .monospaced))

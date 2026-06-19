@@ -46,6 +46,9 @@ public enum SignalSource: UInt8, CaseIterable, Identifiable, Hashable {
     case daw7 = 0x06, daw8 = 0x07, daw9 = 0x08, daw10 = 0x09, daw11 = 0x0a, daw12 = 0x0b
     case analog1 = 0x0c, analog2 = 0x0d, analog3 = 0x0e, analog4 = 0x0f
     case spdif1 = 0x12, spdif2 = 0x13
+    // Canonical IDs only — wire bytes come from DeviceProfile (ADAT is 0x10..0x17 on 18i6/18i8).
+    case adat1 = 0xa0, adat2 = 0xa1, adat3 = 0xa2, adat4 = 0xa3
+    case adat5 = 0xa4, adat6 = 0xa5, adat7 = 0xa6, adat8 = 0xa7
 
     public var id: UInt8 { rawValue }
     public var displayName: String {
@@ -69,7 +72,19 @@ public enum SignalSource: UInt8, CaseIterable, Identifiable, Hashable {
         case .analog4: return "Analog 4"
         case .spdif1:  return "S/PDIF 1"
         case .spdif2:  return "S/PDIF 2"
+        case .adat1:   return "ADAT 1"
+        case .adat2:   return "ADAT 2"
+        case .adat3:   return "ADAT 3"
+        case .adat4:   return "ADAT 4"
+        case .adat5:   return "ADAT 5"
+        case .adat6:   return "ADAT 6"
+        case .adat7:   return "ADAT 7"
+        case .adat8:   return "ADAT 8"
         }
+    }
+
+    public static func fromDisplayName(_ name: String) -> SignalSource? {
+        allCases.first { $0.displayName == name }
     }
 
     /// Useful sources on a real 8i6 — drops the DAW 7-12 slots that aren't
@@ -107,7 +122,11 @@ public enum MixBus: UInt8, CaseIterable, Identifiable, Hashable {
     case daw7 = 0x06, daw8 = 0x07, daw9 = 0x08, daw10 = 0x09, daw11 = 0x0a, daw12 = 0x0b
     case analog1 = 0x0c, analog2 = 0x0d, analog3 = 0x0e, analog4 = 0x0f
     case spdif1 = 0x12, spdif2 = 0x13
+    // Canonical IDs only — wire bytes come from DeviceProfile (ADAT is 0x10..0x17 on 18i6/18i8).
+    case adat1 = 0xa0, adat2 = 0xa1, adat3 = 0xa2, adat4 = 0xa3
+    case adat5 = 0xa4, adat6 = 0xa5, adat7 = 0xa6, adat8 = 0xa7
     case m1 = 0x14, m2 = 0x15, m3 = 0x16, m4 = 0x17, m5 = 0x18, m6 = 0x19
+    case m7 = 0x1e, m8 = 0x1f
 
     public var id: UInt8 { rawValue }
     public var displayName: String {
@@ -131,12 +150,34 @@ public enum MixBus: UInt8, CaseIterable, Identifiable, Hashable {
         case .analog4: return "Analog 4"
         case .spdif1:  return "S/PDIF 1"
         case .spdif2:  return "S/PDIF 2"
+        case .adat1:   return "ADAT 1"
+        case .adat2:   return "ADAT 2"
+        case .adat3:   return "ADAT 3"
+        case .adat4:   return "ADAT 4"
+        case .adat5:   return "ADAT 5"
+        case .adat6:   return "ADAT 6"
+        case .adat7:   return "ADAT 7"
+        case .adat8:   return "ADAT 8"
         case .m1:      return "Mix M1"
         case .m2:      return "Mix M2"
         case .m3:      return "Mix M3"
         case .m4:      return "Mix M4"
         case .m5:      return "Mix M5"
         case .m6:      return "Mix M6"
+        case .m7:      return "Mix M7"
+        case .m8:      return "Mix M8"
+        }
+    }
+
+    public static func fromDisplayName(_ name: String) -> MixBus? {
+        allCases.first { $0.displayName == name }
+    }
+
+    public static func fromMatrixIndex(_ idx: Int) -> MixBus {
+        switch idx {
+        case 0: return .m1; case 1: return .m2; case 2: return .m3; case 3: return .m4
+        case 4: return .m5; case 5: return .m6; case 6: return .m7; case 7: return .m8
+        default: return .m1
         }
     }
 
@@ -152,13 +193,11 @@ public enum MixBus: UInt8, CaseIterable, Identifiable, Hashable {
     /// Just the 6 matrix-output buses (M1..M6), in order.
     public static let matrixOutputs: [MixBus] = [.m1, .m2, .m3, .m4, .m5, .m6]
 
-    /// Index into the matrix (0..5) for the 6 mix-bus outputs. nil for any
-    /// other MixBus case (it's only meaningful for `.m1..m6`).  Used by
-    /// `setMixerGain` to compute the cell address.
+    /// Index into the matrix (0..n-1) for mix-bus outputs. nil for non-matrix cases.
     public var matrixIndex: Int? {
         switch self {
-        case .m1: return 0; case .m2: return 1; case .m3: return 2
-        case .m4: return 3; case .m5: return 4; case .m6: return 5
+        case .m1: return 0; case .m2: return 1; case .m3: return 2; case .m4: return 3
+        case .m5: return 4; case .m6: return 5; case .m7: return 6; case .m8: return 7
         default:  return nil
         }
     }
@@ -243,9 +282,25 @@ public struct PeakReading {
 
     public static let empty = PeakReading(
         inputs: Array(repeating: -.infinity, count: 18),
-        daw:    Array(repeating: -.infinity, count: 6),
+        daw:    Array(repeating: -.infinity, count: 8),
         mixer:  Array(repeating: -.infinity, count: 8)
     )
+
+    /// Peak level for `source` using the connected device's meter layout.
+    public func level(for source: MixBus, profile: DeviceProfile) -> Double {
+        let byte = profile.wireByte(for: source)
+        if source == .off { return -.infinity }
+        if let idx = profile.dawMeterIndex(forByte: byte), idx < daw.count {
+            return daw[idx]
+        }
+        if let idx = profile.inputMeterIndex(forByte: byte), idx < inputs.count {
+            return inputs[idx]
+        }
+        if let idx = profile.mixMeterIndex(forByte: byte), idx < mixer.count {
+            return mixer[idx]
+        }
+        return -.infinity
+    }
 }
 
 // MARK: - Commands
@@ -345,11 +400,12 @@ extension ScarlettDevice {
     /// won't double-assign it — disconnect first with `.off` if needed.
     public func setMixerSource(channel: Int, source: SignalSource) throws {
         guard (0...17).contains(channel) else { throw ScarlettError.invalidArgument("mixer channel must be 0..17") }
+        let byte = profile.wireByte(for: source)
         try controlOut(
             cmd: 0x01,
             value: 0x0600 + UInt16(channel),
             index: 0x3200,
-            data: [source.rawValue, 0x00]
+            data: [byte, 0x00]
         )
     }
 
@@ -369,14 +425,20 @@ extension ScarlettDevice {
 
     // ---- Router -----------------------------------------------------------
 
-    /// Connect a source to one of the 6 physical output routes.
-    public func setRouteSource(_ route: Route, from source: MixBus) throws {
+    /// Connect a source to one physical output route (`wValue` from `DeviceProfile.physicalOutputs`).
+    public func setRouteSource(wValue: UInt16, from source: MixBus) throws {
+        let byte = profile.wireByte(for: source)
         try controlOut(
             cmd: 0x01,
-            value: route.rawValue,
+            value: wValue,
             index: 0x3300,
-            data: [source.rawValue, 0x00]
+            data: [byte, 0x00]
         )
+    }
+
+    /// Connect a source to one of the 6 physical output routes on the 8i6.
+    public func setRouteSource(_ route: Route, from source: MixBus) throws {
+        try setRouteSource(wValue: route.rawValue, from: source)
     }
 
     /// Connect a source to one of the USB capture channels — i.e. what the
@@ -392,14 +454,16 @@ extension ScarlettDevice {
     /// `0x3300` physical-output routes): it sets what gets sent back to
     /// the host as a DAW input.
     public func setCaptureRoute(channel: Int, from source: MixBus) throws {
-        guard (0...7).contains(channel) else {
-            throw ScarlettError.invalidArgument("capture channel must be 0..7")
+        let maxCh = profile.captureChannelCount + profile.loopbackChannelCount - 1
+        guard (0...maxCh).contains(channel) else {
+            throw ScarlettError.invalidArgument("capture channel must be 0..\(maxCh)")
         }
+        let byte = profile.wireByte(for: source)
         try controlOut(
             cmd: 0x01,
             value: UInt16(channel),
             index: 0x3400,
-            data: [source.rawValue, 0x00]
+            data: [byte, 0x00]
         )
     }
 
@@ -412,8 +476,12 @@ extension ScarlettDevice {
     // length matches the set payload.
 
     public func getRouteSource(_ route: Route) throws -> MixBus {
-        let r = try controlIn(cmd: 0x01, value: route.rawValue, index: 0x3300, length: 2)
-        return MixBus(rawValue: r[0]) ?? .off
+        try getRouteSource(wValue: route.rawValue)
+    }
+
+    public func getRouteSource(wValue: UInt16) throws -> MixBus {
+        let r = try controlIn(cmd: 0x01, value: wValue, index: 0x3300, length: 2)
+        return profile.mixBus(fromWireByte: r[0])
     }
 
     public func getMute(_ bus: SignalOut) throws -> Bool {
@@ -454,7 +522,7 @@ extension ScarlettDevice {
     public func getMixerSource(channel: Int) throws -> SignalSource {
         guard (0...17).contains(channel) else { throw ScarlettError.invalidArgument("mixer channel must be 0..17") }
         let r = try controlIn(cmd: 0x01, value: 0x0600 + UInt16(channel), index: 0x3200, length: 2)
-        return SignalSource(rawValue: r[0]) ?? .off
+        return profile.signalSource(fromWireByte: r[0])
     }
 
     /// Read clock-sync status: true = device is locked to its current clock
@@ -488,12 +556,14 @@ extension ScarlettDevice {
 
     public func readPeaks() throws -> PeakReading {
         let ins = try controlIn(cmd: 0x03, value: 0x0000, index: 0x3c00, length: 36)
-        let daw = try controlIn(cmd: 0x03, value: 0x0003, index: 0x3c00, length: 12)
-        let mix = try controlIn(cmd: 0x03, value: 0x0001, index: 0x3c00, length: 16)
+        let dawLen = UInt16(max(6, profile.dawMeterCount) * 2)
+        let daw = try controlIn(cmd: 0x03, value: 0x0003, index: 0x3c00, length: dawLen)
+        let mixLen = UInt16(profile.mixBusCount * 2)
+        let mix = try controlIn(cmd: 0x03, value: 0x0001, index: 0x3c00, length: mixLen)
         return PeakReading(
             inputs: decodePeaks(ins, count: 18),
-            daw:    decodePeaks(daw, count: 6),
-            mixer:  decodePeaks(mix, count: 8)
+            daw:    decodePeaks(daw, count: max(6, profile.dawMeterCount)),
+            mixer:  decodePeaks(mix, count: profile.mixBusCount)
         )
     }
 }

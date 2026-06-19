@@ -115,7 +115,7 @@ private func exportSnapshot(state: MixerState) {
     // mangles our `.8i6` extension into "ScarlettSnapshot.8i6.json".
     panel.allowsOtherFileTypes = true
     panel.nameFieldStringValue = "ScarlettSnapshot.8i6"
-    panel.title = "Save Scarlett 8i6 snapshot"
+    panel.title = "Save Scarlett snapshot"
     if panel.runModal() == .OK, let url = panel.url {
         do { try state.userExportSnapshot(to: url) }
         catch {
@@ -130,7 +130,7 @@ private func importSnapshot(state: MixerState) {
     // No content-type filter — the user might have a `.8i6` file or a
     // `.json` file (both are valid, contents are checked at decode time).
     panel.allowsMultipleSelection = false
-    panel.title = "Open Scarlett 8i6 snapshot"
+    panel.title = "Open Scarlett snapshot"
     if panel.runModal() == .OK, let url = panel.url {
         do { try state.userImportSnapshot(from: url) }
         catch {

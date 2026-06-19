@@ -109,7 +109,13 @@ extension DeviceProfile {
 
     /// All known profiles in this build.  Detection at connect time
     /// matches the device's USB PID against these.
-    public static let all: [DeviceProfile] = [.scarlett8i6, .scarlett18i6, .scarlett18i8]
+    public static let all: [DeviceProfile] = [.scarlett8i6, .scarlett18i8, .scarlett18i6]
+
+    /// Profiles the app will actively drive (matrix, routing, meters).
+    public static let supported: [DeviceProfile] = [.scarlett8i6, .scarlett18i8]
+
+    /// True when this build will open the device and run the full UI flow.
+    public var isSupported: Bool { Self.supported.contains { $0.productID == productID } }
 
     /// Look up a profile by PID.  Returns nil for unknown devices.
     public static func forProductID(_ pid: UInt16) -> DeviceProfile? {
@@ -219,7 +225,7 @@ extension DeviceProfile {
         hasMonitorMono: false
     )
 
-    // ---- Scarlett 18i8 1st gen (USB24Tracker) — EXPERIMENTAL ----------
+    // ---- Scarlett 18i8 1st gen (USB24Tracker) — SUPPORTED ------------
     //
     // 4 analog (+ 4 line) + 2 S/PDIF + 8 ADAT + 8 DAW.  Matrix is 18 × 8.
     // 8 routable physical outputs (Monitor + Phones + Line 5/6 + S/PDIF).
@@ -227,7 +233,7 @@ extension DeviceProfile {
         productID: 0x8014,
         internalName: "USB24Tracker",
         displayName: "Scarlett 18i8 (1st gen)",
-        isExperimental: true,
+        isExperimental: false,
         matrixInputCount: 18,
         mixBusCount: 8,
         sources: [
@@ -236,8 +242,8 @@ extension DeviceProfile {
             .init(byte: 0x09, displayName: "Analog 2",  category: .analog),
             .init(byte: 0x0a, displayName: "Analog 3",  category: .analog),
             .init(byte: 0x0b, displayName: "Analog 4",  category: .analog),
-            .init(byte: 0x0e, displayName: "S/PDIF L",  category: .digital),
-            .init(byte: 0x0f, displayName: "S/PDIF R",  category: .digital),
+            .init(byte: 0x0e, displayName: "S/PDIF 1",  category: .digital),
+            .init(byte: 0x0f, displayName: "S/PDIF 2",  category: .digital),
             .init(byte: 0x10, displayName: "ADAT 1",    category: .digital),
             .init(byte: 0x11, displayName: "ADAT 2",    category: .digital),
             .init(byte: 0x12, displayName: "ADAT 3",    category: .digital),
@@ -300,5 +306,119 @@ extension DeviceProfile {
     /// All Mix M1..Mn entries in source order.  Used to populate router pickers.
     public var mixBusSources: [SourceDescriptor] {
         sources.filter { $0.category == .mixOutput }
+    }
+
+    /// Stereo bus pairs in the matrix (M1+M2, M3+M4, …).
+    public var stereoPairCount: Int { mixBusCount / 2 }
+
+    /// DAW playback channels surfaced in peak meters.
+    public var dawMeterCount: Int {
+        sources.filter { $0.category == .daw }.count
+    }
+
+    /// Sources valid in output-routing and USB-capture pickers.
+    public var routerSources: [SourceDescriptor] {
+        sources.filter { $0.category != .mixOutput || mixBusSources.contains($0) }
+            .filter { $0.category != .off }
+            .sorted { $0.byte < $1.byte }
+            .reduce(into: [SourceDescriptor]()) { acc, s in
+                if !acc.contains(where: { $0.byte == s.byte }) { acc.append(s) }
+            }
+    }
+
+    /// Router pickers always include Off + every routable source + mix buses.
+    public var routerPickerSources: [SourceDescriptor] {
+        [sources.first(where: { $0.category == .off })!]
+            + sources.filter { $0.category != .off }
+    }
+
+    /// Index into `PeakReading.inputs` for a hardware input source byte,
+    /// or nil when the device does not expose a meter for that source.
+    public func inputMeterIndex(forByte byte: UInt8) -> Int? {
+        switch productID {
+        case 0x8002: // 8i6 — verified layout
+            switch byte {
+            case 0x0c: return 0; case 0x0d: return 1
+            case 0x0e: return 2; case 0x0f: return 3
+            case 0x12: return 8; case 0x13: return 9
+            default: return nil
+            }
+        case 0x8014: // 18i8 — 4 analog, S/PDIF @ 8–9, ADAT @ 10–17
+            switch byte {
+            case 0x08: return 0; case 0x09: return 1
+            case 0x0a: return 2; case 0x0b: return 3
+            case 0x0e: return 8; case 0x0f: return 9
+            case 0x10: return 10; case 0x11: return 11
+            case 0x12: return 12; case 0x13: return 13
+            case 0x14: return 14; case 0x15: return 15
+            case 0x16: return 16; case 0x17: return 17
+            default: return nil
+            }
+        case 0x8004: // 18i6 — 8 analog @ 0–7, S/PDIF @ 8–9, ADAT @ 10–17
+            switch byte {
+            case 0x06...0x0d: return Int(byte - 0x06)
+            case 0x0e: return 8; case 0x0f: return 9
+            case 0x10...0x17: return Int(byte - 0x10 + 10)
+            default: return nil
+            }
+        default:
+            return nil
+        }
+    }
+
+    /// Index into `PeakReading.daw` for a DAW source byte.
+    public func dawMeterIndex(forByte byte: UInt8) -> Int? {
+        guard byte <= 0x0b else { return nil }
+        let daw = sources.filter { $0.category == .daw }.sorted { $0.byte < $1.byte }
+        return daw.firstIndex(where: { $0.byte == byte })
+    }
+
+    /// Index into `PeakReading.mixer` for a mix-output source byte.
+    public func mixMeterIndex(forByte byte: UInt8) -> Int? {
+        let mixes = mixBusSources
+        return mixes.firstIndex(where: { $0.byte == byte })
+    }
+
+    /// Translate a canonical app `MixBus` case to this device's wire byte.
+    public func wireByte(for bus: MixBus) -> UInt8 {
+        if bus == .off { return 0xff }
+        let name = bus.displayName
+        if let match = sources.first(where: { $0.displayName == name }) {
+            return match.byte
+        }
+        return bus.rawValue
+    }
+
+    /// Decode a device wire byte into the canonical `MixBus` the UI uses.
+    public func mixBus(fromWireByte byte: UInt8) -> MixBus {
+        if byte == 0xff { return .off }
+        if let desc = sources.first(where: { $0.byte == byte }) {
+            return MixBus.fromDisplayName(desc.displayName) ?? MixBus(rawValue: byte) ?? .off
+        }
+        return MixBus(rawValue: byte) ?? .off
+    }
+
+    /// Translate a canonical app `SignalSource` to this device's wire byte.
+    public func wireByte(for signal: SignalSource) -> UInt8 {
+        if signal == .off { return 0xff }
+        let name = signal.displayName
+        if let match = sources.first(where: { $0.displayName == name }) {
+            return match.byte
+        }
+        return signal.rawValue
+    }
+
+    /// Decode a device wire byte into the canonical `SignalSource`.
+    public func signalSource(fromWireByte byte: UInt8) -> SignalSource {
+        if byte == 0xff { return .off }
+        if let desc = sources.first(where: { $0.byte == byte }) {
+            return SignalSource.fromDisplayName(desc.displayName) ?? SignalSource(rawValue: byte) ?? .off
+        }
+        return SignalSource(rawValue: byte) ?? .off
+    }
+
+    /// Mix buses M1..Mn as canonical enum values (length == mixBusCount).
+    public var matrixOutputBuses: [MixBus] {
+        (0..<mixBusCount).map { MixBus.fromMatrixIndex($0) }
     }
 }
