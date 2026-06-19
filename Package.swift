@@ -22,8 +22,11 @@ let package = Package(
         .executableTarget(
             name: "ScarlettApp",
             dependencies: ["ScarlettCore"],
-            path: "Sources/ScarlettApp",
-            resources: [.process("Resources")]
+            path: "Sources/ScarlettApp"
+            // AppIcon.png lives under Sources/ScarlettApp/Resources/ for
+            // scripts/make-app.sh only — do NOT declare .process("Resources")
+            // here.  That embeds Bundle.module in the binary, which fatalErrors
+            // when the CI-built .app ships without the SPM resource bundle.
         ),
     ]
 )

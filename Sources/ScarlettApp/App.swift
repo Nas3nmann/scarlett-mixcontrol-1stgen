@@ -35,38 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Dock icon — load the PNG from the resource bundle, round its
-        // corners and inset it slightly so it matches the macOS visual
-        // weight of other Dock icons (which use a squircle mask and have
-        // built-in padding around the artwork).
-        if let url = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
-           let raw = NSImage(contentsOf: url) {
-            NSApp.applicationIconImage = macOSStyleIcon(raw)
-        }
-    }
-
-    /// Approximate Apple's standard Dock icon look:
-    ///  - inset the source artwork ~10% so the rendered icon matches the
-    ///    visual size of stock macOS apps
-    ///  - clip the whole canvas with a rounded rectangle (~22% corner
-    ///    radius, close enough to Apple's squircle for our purposes)
-    private func macOSStyleIcon(_ src: NSImage,
-                                inset: CGFloat = 0.08,
-                                cornerFraction: CGFloat = 0.225) -> NSImage {
-        let size = src.size
-        let result = NSImage(size: size)
-        result.lockFocus()
-        let outer = NSRect(origin: .zero, size: size)
-        let radius = min(size.width, size.height) * cornerFraction
-        NSBezierPath(roundedRect: outer, xRadius: radius, yRadius: radius).addClip()
-        let insetPx = min(size.width, size.height) * inset
-        let drawRect = outer.insetBy(dx: insetPx, dy: insetPx)
-        src.draw(in: drawRect,
-                 from: .zero,
-                 operation: .sourceOver,
-                 fraction: 1.0)
-        result.unlockFocus()
-        return result
+        // Runtime icon comes from Contents/Resources/AppIcon.icns (CFBundleIconFile).
+        // No NSApp.applicationIconImage override — avoids lockFocus drawing and
+        // any Bundle.module access in packaged builds.
     }
 }
 

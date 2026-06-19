@@ -40,12 +40,22 @@ final class MixerState {
 
     /// Sources shown in matrix-channel pickers for the connected device.
     var matrixSourceOptions: [SignalSource] {
-        profile.matrixChannelSources.map { profile.signalSource(fromWireByte: $0.byte) }
+        var seen = Set<UInt8>()
+        return profile.matrixChannelSources.compactMap { desc in
+            let src = profile.signalSource(fromWireByte: desc.byte)
+            guard seen.insert(src.rawValue).inserted else { return nil }
+            return src
+        }
     }
 
-    /// Sources shown in routing / capture pickers.
+    /// Sources shown in routing / capture pickers (unique MixBus ids for SwiftUI ForEach).
     var routerPickerOptions: [MixBus] {
-        profile.routerPickerSources.map { profile.mixBus(fromWireByte: $0.byte) }
+        var seen = Set<UInt8>()
+        return profile.routerPickerSources.compactMap { desc in
+            let bus = profile.mixBus(fromWireByte: desc.byte)
+            guard seen.insert(bus.rawValue).inserted else { return nil }
+            return bus
+        }
     }
 
     /// Grouped physical outputs for the routing tab (pair label → outputs).
@@ -56,7 +66,10 @@ final class MixerState {
             if groups[out.pairLabel] == nil { order.append(out.pairLabel) }
             groups[out.pairLabel, default: []].append(out)
         }
-        return order.map { ($0, groups[$0]!) }
+        return order.compactMap { label in
+            guard let outputs = groups[label], !outputs.isEmpty else { return nil }
+            return (label, outputs)
+        }
     }
 
     /// Back-compat: existing call sites read a single error string. Surfaces
@@ -186,7 +199,11 @@ final class MixerState {
 
     init() {
         installCoreAudioListener()
-        attemptConnect()
+        // Defer USB work so the window can appear before we sync-read the
+        // matrix (100+ control transfers when a device is connected).
+        Task { @MainActor in
+            attemptConnect()
+        }
     }
 
     /// Try to (re-)open the device and refresh all state.  Idempotent.

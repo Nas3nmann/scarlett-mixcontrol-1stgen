@@ -328,8 +328,9 @@ extension DeviceProfile {
 
     /// Router pickers always include Off + every routable source + mix buses.
     public var routerPickerSources: [SourceDescriptor] {
-        [sources.first(where: { $0.category == .off })!]
-            + sources.filter { $0.category != .off }
+        let off = sources.first(where: { $0.category == .off })
+            ?? SourceDescriptor(byte: 0xff, displayName: "Off", category: .off)
+        return [off] + sources.filter { $0.category != .off }
     }
 
     /// Index into `PeakReading.inputs` for a hardware input source byte,

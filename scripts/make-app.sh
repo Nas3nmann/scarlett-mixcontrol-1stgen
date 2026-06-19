@@ -45,16 +45,11 @@ echo "→ Copying binary → MacOS/$EXE_NAME"
 cp "$SPM_BIN_DIR/scarlett-app" "$MACOS_DIR/$EXE_NAME"
 chmod +x "$MACOS_DIR/$EXE_NAME"
 
-# We deliberately do NOT copy the SwiftPM resource bundle into the .app.
-# The .app already has Resources/AppIcon.icns (which Finder/Dock use for
-# the icon via the Info.plist's CFBundleIconFile key) so we don't need
-# the runtime `NSApp.applicationIconImage = …` path that loads AppIcon
-# .png via `Bundle.module`.  Skipping the inner bundle also dodges a
-# codesign error: SwiftPM's resource bundles are "flat" directories
-# without an Info.plist, which `codesign` rejects when it tries to sign
-# them as a sub-component of the .app.
+# Copy AppIcon.png into the bundle too (optional runtime use via Bundle.main).
+cp "$ICON_SRC" "$RESOURCES_DIR/AppIcon.png"
 
-# --- Build .icns from the source PNG ----------------------------------------
+# We deliberately do NOT copy the SwiftPM resource bundle into the .app.
+# Finder/Dock icons come from Resources/AppIcon.icns (CFBundleIconFile).
 echo "→ Generating AppIcon.icns from $(basename "$ICON_SRC")"
 rm -rf "$ICONSET_DIR"
 mkdir -p "$ICONSET_DIR"
