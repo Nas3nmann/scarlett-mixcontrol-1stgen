@@ -4,6 +4,7 @@ import ScarlettCore
 /// A vertical mixer strip for one matrix channel in the currently selected bus.
 /// Layout mirrors Focusrite Control 2: name + source + colored underline at top,
 /// fader with dB scale and meter in the middle, M/S buttons at the bottom.
+@MainActor
 struct ChannelStrip: View {
     let channel: Int
     @Bindable var state: MixerState
@@ -269,6 +270,7 @@ struct HiLoSwitch: View {
 /// Live + peak-hold + max meter for one strip.  Isolated into its own struct
 /// so that 20 Hz `peaks*` updates only re-render this view, not the parent
 /// strip's fader / pickers / buttons / name field.
+@MainActor
 struct StripMeter: View {
     @Bindable var state: MixerState
     let source: SignalSource
@@ -298,6 +300,7 @@ extension PeakReading {
 
 /// Numeric "Pk" + clickable "Mx" peak readout. Isolated for the same reason
 /// as `StripMeter` — only this view re-renders when the peak values change.
+@MainActor
 struct StripPeakReadout: View {
     @Bindable var state: MixerState
     let source: SignalSource

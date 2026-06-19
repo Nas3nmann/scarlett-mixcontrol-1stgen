@@ -7,6 +7,7 @@ import ScarlettCore
 /// Below: horizontally scrolling row of `ChannelStrip`s, one per matrix
 /// channel that we expose to the user (first 14 of the 18 protocol slots —
 /// the rest aren't useful on the 8i6).
+@MainActor
 struct MatrixMixerView: View {
     @Bindable var state: MixerState
     private let visibleChannels = 0..<14

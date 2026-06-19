@@ -6,6 +6,7 @@ import ScarlettCore
 /// Pinned DAW return strip.  Drives matrix channels 14 + 15 — reserved at
 /// init for this purpose, sourced from DAW 1 / DAW 2, panned hard-left /
 /// hard-right, and linked so this single fader controls both.
+@MainActor
 struct PinnedDawStrip: View {
     @Bindable var state: MixerState
 
@@ -143,6 +144,7 @@ struct PinnedDawStrip: View {
 
 /// Two vertical output strips (Monitor + Phones) side-by-side. Same height
 /// as channel and DAW strips so the whole row lines up.
+@MainActor
 struct PinnedMasterStrip: View {
     @Bindable var state: MixerState
 
@@ -203,6 +205,7 @@ struct PinnedMasterStrip: View {
 /// Its meters follow whatever's currently routed to that physical output —
 /// if Monitor L is routed from DAW 1 the meter shows DAW 1's level; if
 /// it's routed from Mix M1 the meter shows M1's level.
+@MainActor
 struct OutputStrip: View {
     @Bindable var state: MixerState
     let title: String
@@ -334,6 +337,7 @@ struct OutputStrip: View {
 /// what `MixBus` source the user has routed to a given output. Isolates the
 /// peak observations into its own view so 12-Hz updates only re-render this
 /// little widget, not the whole output strip.
+@MainActor
 struct RoutedMeter: View {
     @Bindable var state: MixerState
     let source: MixBus

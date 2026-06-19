@@ -40,6 +40,7 @@ enum AppTab: String, CaseIterable, Identifiable {
     }
 }
 
+@MainActor
 struct ContentView: View {
     @Bindable var state: MixerState
     @State private var tab: AppTab = .mixer
@@ -262,6 +263,7 @@ struct ContentView: View {
 
 // MARK: - Mixer pane
 
+@MainActor
 struct MixerPaneView: View {
     @Bindable var state: MixerState
 
@@ -281,6 +283,7 @@ struct MixerPaneView: View {
 
 // MARK: - Routing pane
 
+@MainActor
 struct RoutingView: View {
     @Bindable var state: MixerState
 
@@ -409,6 +412,7 @@ extension RoutingView {
 
 // MARK: - Device pane
 
+@MainActor
 struct DeviceView: View {
     @Bindable var state: MixerState
 
@@ -614,6 +618,7 @@ struct DeviceView: View {
 /// with a Retry button.  Used by Mixer and Routing panes — Device and Presets
 /// stay reachable so the user can inspect the event log / saved presets even
 /// while the hardware is gone.
+@MainActor
 struct ConnectionOverlay<Content: View>: View {
     @Bindable var state: MixerState
     @ViewBuilder var content: () -> Content
@@ -638,6 +643,7 @@ struct ConnectionOverlay<Content: View>: View {
     }
 }
 
+@MainActor
 struct ConnectionOverlayCard: View {
     @Bindable var state: MixerState
 
@@ -725,6 +731,7 @@ struct ConnectionOverlayCard: View {
 /// app's modal language is consistent.  Asks the user whether to keep the
 /// device's existing on-flash state or overwrite it with the app's sensible
 /// defaults.
+@MainActor
 struct FirstLaunchCard: View {
     @Bindable var state: MixerState
 
@@ -792,6 +799,7 @@ struct FirstLaunchCard: View {
 
 /// Event log panel for the Device tab.  Lists recent USB, sync and
 /// Core Audio events from `state.deviceEvents`, newest first.
+@MainActor
 struct EventLogPanel: View {
     @Bindable var state: MixerState
 

@@ -1,6 +1,7 @@
 import SwiftUI
 import ScarlettCore
 
+@MainActor
 struct PresetsView: View {
     @Bindable var state: MixerState
     @State private var newPresetName: String = ""
