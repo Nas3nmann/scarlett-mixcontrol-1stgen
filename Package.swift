@@ -1,4 +1,4 @@
-// swift-tools-version: 5.10
+// swift-tools-version: 5.9
 import PackageDescription
 
 let package = Package(
@@ -23,10 +23,7 @@ let package = Package(
             name: "ScarlettApp",
             dependencies: ["ScarlettCore"],
             path: "Sources/ScarlettApp",
-            resources: [.process("Resources")],
-            // SwiftUI + @MainActor MixerState; keep Swift 5 concurrency rules so
-            // private View helpers can touch state without per-closure isolation.
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            resources: [.process("Resources")]
         ),
     ]
 )
