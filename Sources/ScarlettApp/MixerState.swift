@@ -494,6 +494,7 @@ final class MixerState {
                 }
             }
             if device != nil {
+                pushMatrixSourcesToDevice()
                 for ch in 0..<18 {
                     for bus in matrixBuses {
                         pushCellGain(channel: ch, bus: bus)
@@ -1049,8 +1050,6 @@ final class MixerState {
         case .analog2: peaksMax.inputs[1] = -.infinity
         case .analog3: peaksMax.inputs[2] = -.infinity
         case .analog4: peaksMax.inputs[3] = -.infinity
-        case .spdif1:  peaksMax.inputs[8] = -.infinity
-        case .spdif2:  peaksMax.inputs[9] = -.infinity
         case .m1:      peaksMax.mixer[0] = -.infinity
         case .m2:      peaksMax.mixer[1] = -.infinity
         case .m3:      peaksMax.mixer[2] = -.infinity
@@ -1059,7 +1058,9 @@ final class MixerState {
         case .m6:      peaksMax.mixer[5] = -.infinity
         case .m7:      peaksMax.mixer[6] = -.infinity
         case .m8:      peaksMax.mixer[7] = -.infinity
-        case .adat1, .adat2, .adat3, .adat4, .adat5, .adat6, .adat7, .adat8:
+        case .analog5, .analog6, .analog7, .analog8,
+             .spdif1, .spdif2,
+             .adat1, .adat2, .adat3, .adat4, .adat5, .adat6, .adat7, .adat8:
             if let idx = profile.inputMeterIndex(forByte: profile.wireByte(for: source)) {
                 peaksMax.inputs[idx] = -.infinity
             }
@@ -1214,13 +1215,18 @@ final class MixerState {
     func userResetRoutingAndMatrix() {
         let p = profile
         ensureRouteSlots(for: p)
+
+        // 18i8 factory routing sends Monitor + Phones through Mix M1/M2
+        // (matrix must be heard at the physical outputs).  8i6 defaults keep
+        // DAW 1/2 direct for immediate Mac playback.
+        let useMixOutputs = p.productID == 0x8014
         for out in p.physicalOutputs {
             let source: MixBus
             switch out.wValue {
-            case 0: source = .daw1
-            case 1: source = .daw2
-            case 2: source = .daw1
-            case 3: source = .daw2
+            case 0: source = useMixOutputs ? .m1 : .daw1
+            case 1: source = useMixOutputs ? .m2 : .daw2
+            case 2: source = useMixOutputs ? .m1 : .daw1
+            case 3: source = useMixOutputs ? .m2 : .daw2
             default: source = .off
             }
             routes[out.wValue] = source
@@ -1240,7 +1246,12 @@ final class MixerState {
         if p.productID == 0x8014 {
             defaultSources[0] = .analog1; defaultSources[1] = .analog2
             defaultSources[2] = .analog3; defaultSources[3] = .analog4
-            defaultSources[4] = .spdif1;  defaultSources[5] = .spdif2
+            defaultSources[4] = .analog5; defaultSources[5] = .analog6
+            defaultSources[6] = .analog7; defaultSources[7] = .analog8
+            defaultSources[8] = .adat1;   defaultSources[9] = .adat2
+            defaultSources[10] = .adat3;  defaultSources[11] = .adat4
+            defaultSources[12] = .adat5;  defaultSources[13] = .adat6
+            defaultSources[14] = .spdif1; defaultSources[15] = .spdif2
         } else {
             defaultSources[0] = .analog1; defaultSources[1] = .analog2
             defaultSources[2] = .analog3; defaultSources[3] = .analog4
@@ -1252,10 +1263,10 @@ final class MixerState {
                 writeAsync { try? dev.setMixerSource(channel: ch, source: .off) }
             }
         }
-        for ch in 0..<min(6, 18) {
+        for ch in 0..<18 where defaultSources[ch] != .off {
             let src = defaultSources[ch]
             mixerSources[ch] = src
-            if let dev = device, src != .off {
+            if let dev = device {
                 writeAsync { try? dev.setMixerSource(channel: ch, source: src) }
             }
         }
@@ -1296,7 +1307,8 @@ final class MixerState {
         }
 
         saveMatrix()
-        logEvent(.info, "Reset", "Default config applied (Monitor + Phones = DAW 1/2)")
+        let routeNote = useMixOutputs ? "Monitor + Phones = Mix M1/M2" : "Monitor + Phones = DAW 1/2"
+        logEvent(.info, "Reset", "Default config applied (\(routeNote))")
     }
 
     /// Set the channel-wide mute directly (no toggle, no link propagation).
@@ -1354,6 +1366,14 @@ final class MixerState {
         guard let dev = device, let busIdx = bus.matrixIndex else { return }
         let db = effectiveGain(channel: channel, busIdx: busIdx)
         writeAsync { try? dev.setMixerGain(channel: channel, bus: bus, db: db) }
+    }
+
+    /// Re-push every matrix-channel source assignment to the device.
+    private func pushMatrixSourcesToDevice() {
+        guard device != nil else { return }
+        for ch in 0..<18 {
+            userSetMixerSource(channel: ch, source: mixerSources[ch])
+        }
     }
 
     // MARK: - Copy mix to another bus

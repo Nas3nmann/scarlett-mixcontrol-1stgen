@@ -493,7 +493,7 @@ struct DeviceView: View {
                         }
                         Spacer()
                     }
-                    Text("Changing the sample rate while audio is streaming will interrupt usbaudiod and may glitch playback.")
+                    Text("Changing the sample rate while audio is streaming will interrupt usbaudiod and may glitch playback. Also set the same rate in your DAW or system audio — if the host stays at 44.1 kHz while the Scarlett runs at 48 kHz, playback pitch will shift (~1 semitone).")
                         .font(.caption).foregroundStyle(Theme.textSecondary)
                         .padding(.top, 6)
                 }
@@ -549,7 +549,7 @@ struct DeviceView: View {
                                       text: "Scarlett 8i6 — tested")
                             compatRow(symbol: "checkmark.circle.fill",
                                       color: .green,
-                                      text: "Scarlett 18i8 — supported (byte tables from MixControl disassembly)")
+                                      text: "Scarlett 18i8 — supported (byte tables verified vs Linux driver)")
                             compatRow(symbol: "questionmark.circle",
                                       color: .orange,
                                       text: "Scarlett 6i6 — supported by original MixControl, not yet ported")

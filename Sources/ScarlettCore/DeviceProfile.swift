@@ -8,8 +8,8 @@ import Foundation
 //   The 1st-gen Scarletts share the same control-transfer protocol family
 //   (cmd, wValue, wIndex semantics, matrix-cell addressing) but each
 //   model assigns *different bytes* to the same conceptual signal.  E.g.
-//   Mix M1 is byte 0x14 on the 8i6, 0x18 on the 18i6/18i8.  Likewise
-//   Analog 1 is 0x0c on the 8i6, 0x08 on the 18i6, 0x06 on the 18i8.
+//   Mix M1 is byte 0x14 on the 8i6, 0x18 on the 18i6, 0x1a on the 18i8.
+//   Analog 1 is 0x0c on the 8i6, 0x06 on the 18i6, 0x08 on the 18i8.
 //
 //   Hard-coding one device's bytes into an enum means we can't reuse the
 //   protocol layer for a sibling model.  A profile lets the protocol
@@ -227,7 +227,8 @@ extension DeviceProfile {
 
     // ---- Scarlett 18i8 1st gen (USB24Tracker) — SUPPORTED ------------
     //
-    // 4 analog (+ 4 line) + 2 S/PDIF + 8 ADAT + 8 DAW.  Matrix is 18 × 8.
+    // 8 analog + 2 S/PDIF + 8 ADAT + 8 DAW.  Matrix is 18 × 8.
+    // Wire bytes verified against Linux `s18i8_info` in mixer_scarlett.c.
     // 8 routable physical outputs (Monitor + Phones + Line 5/6 + S/PDIF).
     public static let scarlett18i8 = DeviceProfile(
         productID: 0x8014,
@@ -242,16 +243,20 @@ extension DeviceProfile {
             .init(byte: 0x09, displayName: "Analog 2",  category: .analog),
             .init(byte: 0x0a, displayName: "Analog 3",  category: .analog),
             .init(byte: 0x0b, displayName: "Analog 4",  category: .analog),
-            .init(byte: 0x0e, displayName: "S/PDIF 1",  category: .digital),
-            .init(byte: 0x0f, displayName: "S/PDIF 2",  category: .digital),
-            .init(byte: 0x10, displayName: "ADAT 1",    category: .digital),
-            .init(byte: 0x11, displayName: "ADAT 2",    category: .digital),
-            .init(byte: 0x12, displayName: "ADAT 3",    category: .digital),
-            .init(byte: 0x13, displayName: "ADAT 4",    category: .digital),
-            .init(byte: 0x14, displayName: "ADAT 5",    category: .digital),
-            .init(byte: 0x15, displayName: "ADAT 6",    category: .digital),
-            .init(byte: 0x16, displayName: "ADAT 7",    category: .digital),
-            .init(byte: 0x17, displayName: "ADAT 8",    category: .digital),
+            .init(byte: 0x0c, displayName: "Analog 5",  category: .analog),
+            .init(byte: 0x0d, displayName: "Analog 6",  category: .analog),
+            .init(byte: 0x0e, displayName: "Analog 7",  category: .analog),
+            .init(byte: 0x0f, displayName: "Analog 8",  category: .analog),
+            .init(byte: 0x10, displayName: "S/PDIF 1",  category: .digital),
+            .init(byte: 0x11, displayName: "S/PDIF 2",  category: .digital),
+            .init(byte: 0x12, displayName: "ADAT 1",    category: .digital),
+            .init(byte: 0x13, displayName: "ADAT 2",    category: .digital),
+            .init(byte: 0x14, displayName: "ADAT 3",    category: .digital),
+            .init(byte: 0x15, displayName: "ADAT 4",    category: .digital),
+            .init(byte: 0x16, displayName: "ADAT 5",    category: .digital),
+            .init(byte: 0x17, displayName: "ADAT 6",    category: .digital),
+            .init(byte: 0x18, displayName: "ADAT 7",    category: .digital),
+            .init(byte: 0x19, displayName: "ADAT 8",    category: .digital),
             .init(byte: 0x00, displayName: "DAW 1",     category: .daw),
             .init(byte: 0x01, displayName: "DAW 2",     category: .daw),
             .init(byte: 0x02, displayName: "DAW 3",     category: .daw),
@@ -260,14 +265,14 @@ extension DeviceProfile {
             .init(byte: 0x05, displayName: "DAW 6",     category: .daw),
             .init(byte: 0x06, displayName: "DAW 7",     category: .daw),
             .init(byte: 0x07, displayName: "DAW 8",     category: .daw),
-            .init(byte: 0x18, displayName: "Mix M1",    category: .mixOutput),
-            .init(byte: 0x19, displayName: "Mix M2",    category: .mixOutput),
-            .init(byte: 0x1a, displayName: "Mix M3",    category: .mixOutput),
-            .init(byte: 0x1b, displayName: "Mix M4",    category: .mixOutput),
-            .init(byte: 0x1c, displayName: "Mix M5",    category: .mixOutput),
-            .init(byte: 0x1d, displayName: "Mix M6",    category: .mixOutput),
-            .init(byte: 0x1e, displayName: "Mix M7",    category: .mixOutput),
-            .init(byte: 0x1f, displayName: "Mix M8",    category: .mixOutput),
+            .init(byte: 0x1a, displayName: "Mix M1",    category: .mixOutput),
+            .init(byte: 0x1b, displayName: "Mix M2",    category: .mixOutput),
+            .init(byte: 0x1c, displayName: "Mix M3",    category: .mixOutput),
+            .init(byte: 0x1d, displayName: "Mix M4",    category: .mixOutput),
+            .init(byte: 0x1e, displayName: "Mix M5",    category: .mixOutput),
+            .init(byte: 0x1f, displayName: "Mix M6",    category: .mixOutput),
+            .init(byte: 0x20, displayName: "Mix M7",    category: .mixOutput),
+            .init(byte: 0x21, displayName: "Mix M8",    category: .mixOutput),
         ],
         physicalOutputs: [
             .init(wValue: 0, displayName: "Monitor L",   pairLabel: "Monitor",  isLeft: true),
@@ -344,15 +349,11 @@ extension DeviceProfile {
             case 0x12: return 8; case 0x13: return 9
             default: return nil
             }
-        case 0x8014: // 18i8 — 4 analog, S/PDIF @ 8–9, ADAT @ 10–17
+        case 0x8014: // 18i8 — 8 analog @ 0x08–0x0f, S/PDIF @ 0x10–0x11, ADAT @ 0x12–0x19
             switch byte {
-            case 0x08: return 0; case 0x09: return 1
-            case 0x0a: return 2; case 0x0b: return 3
-            case 0x0e: return 8; case 0x0f: return 9
-            case 0x10: return 10; case 0x11: return 11
-            case 0x12: return 12; case 0x13: return 13
-            case 0x14: return 14; case 0x15: return 15
-            case 0x16: return 16; case 0x17: return 17
+            case 0x08...0x0f: return Int(byte - 0x08)
+            case 0x10: return 8; case 0x11: return 9
+            case 0x12...0x19: return Int(byte - 0x12 + 10)
             default: return nil
             }
         case 0x8004: // 18i6 — 8 analog @ 0–7, S/PDIF @ 8–9, ADAT @ 10–17

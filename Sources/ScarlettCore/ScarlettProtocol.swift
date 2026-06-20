@@ -45,6 +45,7 @@ public enum SignalSource: UInt8, CaseIterable, Identifiable, Hashable {
     case daw1 = 0x00, daw2 = 0x01, daw3 = 0x02, daw4 = 0x03, daw5 = 0x04, daw6 = 0x05
     case daw7 = 0x06, daw8 = 0x07, daw9 = 0x08, daw10 = 0x09, daw11 = 0x0a, daw12 = 0x0b
     case analog1 = 0x0c, analog2 = 0x0d, analog3 = 0x0e, analog4 = 0x0f
+    case analog5 = 0xb0, analog6 = 0xb1, analog7 = 0xb2, analog8 = 0xb3
     case spdif1 = 0x12, spdif2 = 0x13
     // Canonical IDs only — wire bytes come from DeviceProfile (ADAT is 0x10..0x17 on 18i6/18i8).
     case adat1 = 0xa0, adat2 = 0xa1, adat3 = 0xa2, adat4 = 0xa3
@@ -70,6 +71,10 @@ public enum SignalSource: UInt8, CaseIterable, Identifiable, Hashable {
         case .analog2: return "Analog 2"
         case .analog3: return "Analog 3"
         case .analog4: return "Analog 4"
+        case .analog5: return "Analog 5"
+        case .analog6: return "Analog 6"
+        case .analog7: return "Analog 7"
+        case .analog8: return "Analog 8"
         case .spdif1:  return "S/PDIF 1"
         case .spdif2:  return "S/PDIF 2"
         case .adat1:   return "ADAT 1"
@@ -121,6 +126,7 @@ public enum MixBus: UInt8, CaseIterable, Identifiable, Hashable {
     case daw1 = 0x00, daw2 = 0x01, daw3 = 0x02, daw4 = 0x03, daw5 = 0x04, daw6 = 0x05
     case daw7 = 0x06, daw8 = 0x07, daw9 = 0x08, daw10 = 0x09, daw11 = 0x0a, daw12 = 0x0b
     case analog1 = 0x0c, analog2 = 0x0d, analog3 = 0x0e, analog4 = 0x0f
+    case analog5 = 0xb0, analog6 = 0xb1, analog7 = 0xb2, analog8 = 0xb3
     case spdif1 = 0x12, spdif2 = 0x13
     // Canonical IDs only — wire bytes come from DeviceProfile (ADAT is 0x10..0x17 on 18i6/18i8).
     case adat1 = 0xa0, adat2 = 0xa1, adat3 = 0xa2, adat4 = 0xa3
@@ -148,6 +154,10 @@ public enum MixBus: UInt8, CaseIterable, Identifiable, Hashable {
         case .analog2: return "Analog 2"
         case .analog3: return "Analog 3"
         case .analog4: return "Analog 4"
+        case .analog5: return "Analog 5"
+        case .analog6: return "Analog 6"
+        case .analog7: return "Analog 7"
+        case .analog8: return "Analog 8"
         case .spdif1:  return "S/PDIF 1"
         case .spdif2:  return "S/PDIF 2"
         case .adat1:   return "ADAT 1"
